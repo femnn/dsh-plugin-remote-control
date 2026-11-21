@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Remote control",
+    "description": "A right-sidebar console for Android phones and TVs: auto-discovery over wireless ADB (no manual IP), live screen view, tappable system keys, text input, AI control that lets a multimodal model look at the screen and act on its own, computer-to-device casting, device-to-device relaying, file transfer and APK install; plus phone_* tools for the Agent.",
+    "detail": "docs/DETAIL.md"
+  }
+}

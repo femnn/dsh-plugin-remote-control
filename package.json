@@ -1,0 +1,53 @@
+{
+  "name": "@local/dsh-phone-remote",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DSH 右侧栏的安卓手机/电视远程操控台：自动发现连接、实时画面与点按、AI 看图操控、投屏、发文件装 APK，并附带 Agent 操控工具。",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/femnn/dsh-plugin-remote-control.git"
+  },
+  "homepage": "https://github.com/femnn/dsh-plugin-remote-control#readme",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "android",
+    "adb",
+    "remote-control",
+    "screen-mirroring"
+  ]
+}

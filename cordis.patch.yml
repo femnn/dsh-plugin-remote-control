@@ -1,0 +1,12 @@
+# 远程操控（dsh-phone-remote）：同一个包提供 Host 半片（/api/phone-remote 的 ADB 路由）
+# 和浏览器半片（右侧栏的「远程操控」标签页）。
+- insert:
+    - id: phone-remote
+      name: '@local/dsh-phone-remote'
+      config:
+        # adb 可执行文件绝对路径；留空会自动探测常见位置（含 Android SDK / PATH）。
+        adbPath: ''
+        # ffmpeg 绝对路径（实时画面与投屏用它转码）；留空自动探测。
+        ffmpegPath: ''
+        # 手机里默认的接收目录。
+        downloadDir: /sdcard/Download
