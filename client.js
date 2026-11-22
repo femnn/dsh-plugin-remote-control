@@ -558,7 +558,9 @@ window.__ModuleLoader__.load({
 
       const uploadOne = (file, install) => new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest()
-        const isInstall = install || /\.apk$/i.test(file.name)
+        // 是否安装完全由调用方决定（「发送文件」=false 走 push，「安装 APK」=true 走 install）。
+        // 绝不靠 .apk 后缀判断——否则「发送文件」里发 APK 会被误当成安装、手机里找不到文件。
+        const isInstall = Boolean(install)
         // 安装走「任务 + 轮询」：能显示真实进度（上传百分比 + 安装阶段）。
         if (isInstall) {
           xhr.open('POST', API + '/install-start')
