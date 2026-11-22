@@ -1158,6 +1158,7 @@ export function apply(ctx, config) {
     keepAwake: new Set(),     // 需要防休眠的设备 serial
     lastWake: new Map(),      // serial -> at
     lastGlassesScan: 0,       // 上次扫眼镜的时间
+    glassesPersist: new Set(), // 已设置持久 adb 端口的眼镜 serial
   }
   function watchNote(key, reason) {
     watcher.notes.set(key, { reason, at: Date.now() })
@@ -1204,6 +1205,15 @@ export function apply(ctx, config) {
       await reconnectByMdns()
       // 眼镜走 adb tcpip 5555，不广播 mDNS：换网络后 IP 会变，得主动扫当前网段的 5555 找回。
       await reconnectGlasses()
+      // 眼镜：连上后设置持久 adb 端口，之后重启眼镜 adbd 会自动在 5555 监听，
+      // 配合 reconnectGlasses 的扫网段，实现「重启后自动连回来」。每台只设一次。
+      for (const d of raw) {
+        if (d.state !== 'device') continue
+        if (!/glasses|rg[_-]?glasses|rokid|yodaos/i.test(d.model || '')) continue
+        if (watcher.glassesPersist.has(d.serial)) continue
+        watcher.glassesPersist.add(d.serial)
+        adb(withTarget(['shell', 'setprop service.adb.tcp.port 5555; setprop persist.adb.tcp.port 5555'], d.serial), { timeout: 8000 }).catch(() => {})
+      }
       // 防休眠：对开启保活的设备，定期补一次「保持连接」，
       // 但**绝不再发 KEYCODE_WAKEUP**——唤醒键会触发人脸/指纹「智能解锁」，
       // 用户断开串流后手机还会自己亮、显示解锁成功，就是这里造成的。
@@ -1225,18 +1235,32 @@ export function apply(ctx, config) {
    * 就扫当前网段的 5555 端口，逐个 adb connect，用 model 认出眼镜并接管。
    */
   async function reconnectGlasses() {
-    if (Date.now() - watcher.lastGlassesScan < 45000) return
+    if (Date.now() - watcher.lastGlassesScan < 25000) return
     // 名册里有没有「眼镜」这个身份，以及它现在是否离线
-    const hasGlasses = Object.values(roster).some((e) => /glasses|rg[_-]?glasses|rokid|yodaos/i.test(`${e.model || ''} ${e.name || ''}`))
-    if (!hasGlasses) return
+    const glassesEntries = Object.values(roster).filter((e) => /glasses|rg[_-]?glasses|rokid|yodaos/i.test(`${e.model || ''} ${e.name || ''}`))
+    if (!glassesEntries.length) return
     const raw = await adbDevices()
     const onlineGlasses = raw.some((d) => d.state === 'device' && /glasses|rg[_-]?glasses|rokid|yodaos/i.test(d.model || ''))
     if (onlineGlasses) { watcher.lastGlassesScan = Date.now(); return }
     watcher.lastGlassesScan = Date.now()
+    const verify = async (addr) => {
+      await adb(['connect', addr], { timeout: 8000 }).catch(() => {})
+      const chk = await adb(['-s', addr, 'shell', 'getprop', 'ro.product.model'], { timeout: 6000 }).catch(() => null)
+      const model = (chk && chk.stdout ? chk.stdout : '').trim()
+      if (/glasses|rg[_-]?glasses|rokid|yodaos/i.test(model)) { watchNote(addr, `眼镜已重新连接（${model || 'glasses'} @ ${addr}）`); return true }
+      if (chk && chk.ok) await adb(['disconnect', addr], { timeout: 4000 }).catch(() => {})
+      return false
+    }
+    // 1) 先试名册里记住的 IP（重启后同 IP 的情况最快）
+    const knownIps = [...new Set(glassesEntries.map((e) => e.ip).filter(Boolean))]
+    for (const ip of knownIps) {
+      if (raw.some((d) => d.serial === `${ip}:5555` && d.state === 'device')) continue
+      if (await verify(`${ip}:5555`)) return
+    }
+    // 2) 扫当前网段的 :5555（换 IP 时）
     const myIp = localIp()
     if (!/^\d+\.\d+\.\d+\.\d+$/.test(myIp)) return
     const prefix = myIp.split('.').slice(0, 3).join('.')
-    // 并发探测本网段 :5555
     const probe = (ip) => new Promise((resolve) => {
       const s = net.connect({ host: ip, port: 5555 })
       const done = (ok) => { try { s.destroy() } catch { /* ignore */ } resolve(ok ? ip : null) }
@@ -1250,16 +1274,7 @@ export function apply(ctx, config) {
     for (const ip of hits) {
       const addr = `${ip}:5555`
       if (raw.some((d) => d.serial === addr && d.state === 'device')) continue
-      await adb(['connect', addr], { timeout: 8000 }).catch(() => {})
-      const chk = await adb(['-s', addr, 'shell', 'getprop', 'ro.product.model'], { timeout: 6000 }).catch(() => null)
-      const model = (chk && chk.stdout ? chk.stdout : '').trim()
-      if (/glasses|rg[_-]?glasses|rokid|yodaos/i.test(model)) {
-        watchNote(addr, `眼镜已重新连接（${model || 'glasses'} @ ${ip}）`)
-        break
-      } else if (chk && chk.ok) {
-        // 不是眼镜的普通设备，不接管
-        await adb(['disconnect', addr], { timeout: 4000 }).catch(() => {})
-      }
+      if (await verify(addr)) return
     }
   }
 
@@ -2142,7 +2157,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
       res.writeHead(200, { 'content-type': 'multipart/x-mixed-replace; boundary=ffmpeg', 'cache-control': 'no-cache', 'access-control-allow-origin': '*' })
       const size = '640x360'
       const cmd = `"${bin}" -s "${from}" exec-out screenrecord --output-format=h264 --time-limit 170 --size ${size} - | ` +
-        `"${ffmpeg}" -hide_banner -loglevel error -f h264 -i pipe:0 -vf fps=10 -c:v mjpeg -q:v 9 -flush_packets 1 -f mpjpeg -`
+        `"${ffmpeg}" -hide_banner -loglevel error -use_wallclock_as_timestamps 1 -f h264 -i pipe:0 -vf fps=8 -c:v mjpeg -q:v 9 -flush_packets 1 -f mpjpeg -`
       const child = spawn('/bin/sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'], detached: true })
       ownedChildren.add(child)
       child.on('close', () => ownedChildren.delete(child))
@@ -2592,7 +2607,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     const runScreenrecord = () => new Promise((resolve) => {
       if (hub.stop) { resolve(0); return }
       const cmd = `"${bin}" -s "${serial}" exec-out screenrecord --output-format=h264 --time-limit 12 --size ${size} - | ` +
-        `"${ffmpeg}" -hide_banner -loglevel error -f h264 -i pipe:0 -vf fps=10 -c:v mjpeg -q:v ${quality} -flush_packets 1 -f mpjpeg -`
+        `"${ffmpeg}" -hide_banner -loglevel error -use_wallclock_as_timestamps 1 -f h264 -i pipe:0 -vf fps=8 -c:v mjpeg -q:v ${quality} -flush_packets 1 -f mpjpeg -`
       let finished = false
       const done = () => { if (!finished) { finished = true; hub.child = null; resolve(1) } }
       try { hub.child = spawn('/bin/sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'], detached: true }) } catch { done(); return }

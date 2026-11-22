@@ -292,6 +292,7 @@ window.__ModuleLoader__.load({
       const [browseEntries, setBrowseEntries] = useState([])
       const [browseBusy, setBrowseBusy] = useState(false)
       const [browseErr, setBrowseErr] = useState('')
+      const [showBrowser, setShowBrowser] = useState(false)
       const [shot, setShot] = useState('')
       const [liveView, setLiveView] = useState(true)
       const [bigView, setBigView] = useState(false)
@@ -729,6 +730,7 @@ window.__ModuleLoader__.load({
       // 切换设备时，自动打开它真实的默认目录（眼镜→/sdcard/RKDwnload，其它→Download/RemoteControl）。
       const targetKind = targetDevice ? (targetDevice.kind || (/glasses|rg[_-]?glasses|rokid|yodaos/i.test((targetDevice.model || '') + ' ' + (targetDevice.name || '')) ? 'glasses' : /tv|电视|盒子|box|mitv/i.test((targetDevice.model || '') + ' ' + (targetDevice.name || '')) ? 'tv' : 'phone')) : 'phone'
       useEffect(() => {
+        setShowBrowser(false)
         if (targetId && targetDevice && targetDevice.state === 'device') loadBrowse(defDest(targetKind))
         else { setBrowsePath(''); setBrowseEntries([]) }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -966,31 +968,37 @@ window.__ModuleLoader__.load({
 
       const filesBody = h('div', null,
         targetPicker,
-        h('div', { style: S.section }, '选择发送目标（设备真实目录）'),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } },
-          h('button', { style: { ...S.ghost(disabled), height: 28, padding: '0 8px', flex: '0 0 auto' }, onClick: () => loadBrowse(browseParent || '/'), disabled: browseBusy || !targetId || !browsePath || browsePath === '/' }, '⬆ 上一级'),
-          h('div', { style: { flex: '1 1 auto', minWidth: 0, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: browsePath || dest }, browsePath || dest || '(未选择设备)'),
-          h('button', { style: { ...S.ghost(disabled), height: 28, padding: '0 8px', flex: '0 0 auto' }, onClick: () => loadBrowse(browsePath || dest), disabled: browseBusy || !targetId }, '刷新'),
+        h('div', { style: S.section }, '发送目标'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h('div', { style: { flex: '1 1 auto', minWidth: 0, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: dest || '' }, dest || '(未选择设备)'),
+          h('button', { style: { ...S.ghost(disabled), height: 28, padding: '0 10px', flex: '0 0 auto' }, onClick: () => { if (!showBrowser) loadBrowse(browsePath || dest); setShowBrowser((v) => !v) }, disabled: !targetId }, showBrowser ? '收起 ▴' : '更改位置 ▾'),
         ),
-        h('div', { style: { maxHeight: 220, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, background: C.layer } },
-          browseBusy
-            ? h('div', { style: { padding: 12, fontSize: 11.5, color: C.text3 } }, '读取目录中…')
-            : browseErr
-              ? h('div', { style: { padding: 12, fontSize: 11.5, color: C.danger } }, '读取失败：' + browseErr)
-              : browseEntries.length
-                ? browseEntries.map((e, i) => h('div', {
-                    key: 'b' + i + '-' + e.name,
-                    style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderTop: i ? `1px solid ${C.border}` : 'none', cursor: e.dir ? 'pointer' : 'default' },
-                    onClick: e.dir ? () => loadBrowse(joinPath(browsePath, e.name)) : undefined,
-                    title: e.name,
-                  },
-                    h('span', { style: { color: e.dir ? C.primary : C.text3, display: 'inline-flex', flex: '0 0 auto' } }, h(Ic, { name: e.dir ? 'folder' : 'file', size: 14 })),
-                    h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5 } }, e.name),
-                    e.dir ? null : h('span', { style: { fontSize: 10, color: C.text3, flex: '0 0 auto' } }, fmtSize(e.size)),
-                  ))
-                : h('div', { style: { padding: 12, fontSize: 11.5, color: C.text3 } }, targetId ? '空目录' : '请先选择设备'),
-        ),
-        h('div', { style: { fontSize: 11, color: C.text2, marginTop: 6, lineHeight: 1.5 } }, '发送目标：', h('span', { style: { fontFamily: 'ui-monospace, Menlo, monospace', color: C.primary } }, dest || '—'), '　点文件夹可进入，选到想要的目录再发送。'),
+        showBrowser ? h('div', { style: { marginTop: 8 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } },
+            h('button', { style: { ...S.ghost(disabled), height: 28, padding: '0 8px', flex: '0 0 auto' }, onClick: () => loadBrowse(browseParent || '/'), disabled: browseBusy || !targetId || !browsePath || browsePath === '/' }, '⬆ 上一级'),
+            h('div', { style: { flex: '1 1 auto', minWidth: 0, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11, color: C.text2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: browsePath || dest }, browsePath || dest || ''),
+            h('button', { style: { ...S.ghost(disabled), height: 28, padding: '0 8px', flex: '0 0 auto' }, onClick: () => loadBrowse(browsePath || dest), disabled: browseBusy || !targetId }, '刷新'),
+          ),
+          h('div', { style: { maxHeight: 200, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, background: C.layer } },
+            browseBusy
+              ? h('div', { style: { padding: 12, fontSize: 11.5, color: C.text3 } }, '读取目录中…')
+              : browseErr
+                ? h('div', { style: { padding: 12, fontSize: 11.5, color: C.danger } }, '读取失败：' + browseErr)
+                : browseEntries.length
+                  ? browseEntries.map((e, i) => h('div', {
+                      key: 'b' + i + '-' + e.name,
+                      style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderTop: i ? `1px solid ${C.border}` : 'none', cursor: e.dir ? 'pointer' : 'default' },
+                      onClick: e.dir ? () => loadBrowse(joinPath(browsePath, e.name)) : undefined,
+                      title: e.name,
+                    },
+                      h('span', { style: { color: e.dir ? C.primary : C.text3, display: 'inline-flex', flex: '0 0 auto' } }, h(Ic, { name: e.dir ? 'folder' : 'file', size: 14 })),
+                      h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5 } }, e.name),
+                      e.dir ? null : h('span', { style: { fontSize: 10, color: C.text3, flex: '0 0 auto' } }, fmtSize(e.size)),
+                    ))
+                  : h('div', { style: { padding: 12, fontSize: 11.5, color: C.text3 } }, targetId ? '空目录' : '请先选择设备'),
+          ),
+          h('div', { style: { fontSize: 11, color: C.text3, marginTop: 6 } }, '点文件夹可进入，选到想要的目录即可（当前：' + (dest || '—') + '）'),
+        ) : null,
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 } },
           h('button', { style: S.tile, onClick: () => fileRef.current && fileRef.current.click(), disabled }, h('span', { style: S.tileIcon }, h(Ic, { name: 'folder', size: 18 })), h('span', { style: S.tileTitle }, t('files.send')), h('span', { style: S.tileSub }, t('files.sendSub'))),
           h('button', { style: S.tile, onClick: () => apkRef.current && apkRef.current.click(), disabled }, h('span', { style: S.tileIcon }, h(Ic, { name: 'apk', size: 18 })), h('span', { style: S.tileTitle }, t('files.install')), h('span', { style: S.tileSub }, t('files.installSub'))),
