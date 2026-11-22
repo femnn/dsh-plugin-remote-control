@@ -2310,6 +2310,35 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     return { path, listing: `${r.stdout || ''}${r.stderr || ''}`.trim(), device: t }
   }
 
+  /** 结构化列出设备目录，供面板当文件管理器用（返回子目录/文件、父目录）。 */
+  async function browseDir(dir, device) {
+    const t = await resolveTarget(device)
+    if (!t) throw Object.assign(new Error('还没有连接设备'), { status: 409 })
+    let path = String(dir || '/sdcard').trim() || '/sdcard'
+    path = path.replace(/\/+$/, '') || '/'
+    // 用尾斜杠让 ls 跟随符号链接（/sdcard 常是指向 /storage/emulated/0 的软链）。
+    const lsTarget = path === '/' ? '/' : path + '/'
+    const r = await adb(withTarget(['shell', 'ls', '-la', lsTarget], t), { timeout: 15000 })
+    const out = `${r.stdout || ''}`
+    const entries = []
+    for (const line of out.split('\n')) {
+      const s = line.trim()
+      if (!s || /^total\s/i.test(s)) continue
+      const toks = s.split(/\s+/)
+      const dateIdx = toks.findIndex((x) => /^\d{4}-\d{2}-\d{2}$/.test(x))
+      if (dateIdx < 0) continue
+      const name = toks.slice(dateIdx + 2).join(' ')
+      if (!name || name === '.' || name === '..') continue
+      let nm = name
+      if (s[0] === 'l' && nm.includes(' -> ')) nm = nm.split(' -> ')[0]
+      entries.push({ name: nm, dir: s[0] === 'd', size: Number(toks[dateIdx - 1]) || 0 })
+    }
+    entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+    const parent = path === '/' ? '' : (path.replace(/\/[^/]+$/, '') || '/')
+    const err = !entries.length && r.stderr ? String(r.stderr).trim() : ''
+    return { path, parent, entries, error: err, device: t }
+  }
+
   /** 用系统 python3 + cv2 解二维码，返回识别到的文本。 */
   async function decodeQr(buffer) {
     const tmp = await mkdtemp(join(tmpdir(), 'dsh-qr-'))
@@ -2683,6 +2712,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     if (path === '/companion-command') { const b = await readJson(req); return ok(res, await companionCommand(b.ip, b.action, b.payload)) }
     if (path === '/shell') { const b = await readJson(req); return ok(res, await shell(String(b.command || ''), b.device)) }
     if (path === '/list') { const b = await readJson(req); return ok(res, await listDir(b.path, b.device)) }
+    if (path === '/browse') { const b = await readJson(req); return ok(res, await browseDir(b.path, b.device)) }
     if (path === '/input') { const b = await readJson(req); return ok(res, await input(b)) }
     if (path === '/launch') { const b = await readJson(req); return ok(res, await launch(b.package, b.device)) }
     if (path === '/cast') { const b = await readJson(req); return ok(res, await startCast(b.device, b.mode)) }

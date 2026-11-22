@@ -182,6 +182,7 @@ window.__ModuleLoader__.load({
         link: [h('path', { key: 'a', d: 'M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1' }), h('path', { key: 'b', d: 'M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1' })],
         unlink: [h('path', { key: 'a', d: 'M9 15l-1.5 1.5a3.5 3.5 0 0 1-5-5L4 10' }), h('path', { key: 'b', d: 'M15 9l1.5-1.5a3.5 3.5 0 0 1 5 5L20 14' }), h('line', { key: 'c', x1: 3, y1: 3, x2: 21, y2: 21 })],
         folder: [h('path', { key: 'a', d: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' })],
+        file: [h('path', { key: 'a', d: 'M6 2h7l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z' }), h('path', { key: 'b', d: 'M13 2v5h5' })],
         apk: [h('rect', { key: 'a', x: 4, y: 4, width: 16, height: 16, rx: 3 }), h('path', { key: 'b', d: 'M12 8v6M9 11l3 3 3-3' })],
         camera: [h('rect', { key: 'a', x: 3, y: 7, width: 18, height: 13, rx: 2.5 }), h('circle', { key: 'b', cx: 12, cy: 13, r: 3.4 })],
         back: [h('path', { key: 'a', d: 'M15 18l-6-6 6-6' })],
@@ -286,8 +287,14 @@ window.__ModuleLoader__.load({
       const [msg, setMsg] = useState(null)
       const [dest, setDest] = useState('/sdcard/Download/RemoteControl')
       const [listing, setListing] = useState('')
+      const [browsePath, setBrowsePath] = useState('')
+      const [browseParent, setBrowseParent] = useState('')
+      const [browseEntries, setBrowseEntries] = useState([])
+      const [browseBusy, setBrowseBusy] = useState(false)
+      const [browseErr, setBrowseErr] = useState('')
       const [shot, setShot] = useState('')
       const [liveView, setLiveView] = useState(true)
+      const [bigView, setBigView] = useState(false)
       const [castInfo, setCastInfo] = useState('')
       const [keepAwakeList, setKeepAwakeList] = useState([])
       const [liveAspect, setLiveAspect] = useState(0)
@@ -626,6 +633,21 @@ window.__ModuleLoader__.load({
         } catch (e) { note('err', e.message) } finally { setBusy(''); setInstallProgress(null); if (fileRef.current) fileRef.current.value = ''; if (apkRef.current) apkRef.current.value = '' }
       }
       const refreshDir = async () => { setBusy(t('busy.working')); try { const v = await api('/list', { path: dest, device: targetId }); setListing(v.listing) } catch (e) { note('err', e.message) } finally { setBusy('') } }
+      const defDest = (k) => (k === 'glasses' ? '/sdcard/RKDownload' : '/sdcard/Download/RemoteControl')
+      const joinPath = (base, name) => (!base || base === '/' ? '/' + name : base.replace(/\/$/, '') + '/' + name)
+      const fmtSize = (n) => { if (!n && n !== 0) return ''; if (n < 1024) return n + 'B'; if (n < 1048576) return (n / 1024).toFixed(0) + 'K'; return (n / 1048576).toFixed(1) + 'M' }
+      const loadBrowse = async (p, allowFallback = true) => {
+        if (!targetId) { setBrowsePath(''); setBrowseEntries([]); return }
+        setBrowseBusy(true); setBrowseErr(''); setBrowseEntries([])
+        try {
+          const v = await api('/browse', { path: p, device: targetId })
+          setBrowsePath(v.path); setBrowseParent(v.parent || ''); setBrowseEntries(v.entries || []); setDest(v.path)
+          if (v.error) {
+            if (allowFallback && v.path !== '/sdcard') { return loadBrowse('/sdcard', false) }
+            setBrowseErr(v.error)
+          }
+        } catch (e) { setBrowseErr(e.message) } finally { setBrowseBusy(false) }
+      }
       const doScreencap = async () => { setBusy(t('busy.working')); try { const v = await api('/screencap', { device: targetId }); setShot(v.dataUrl); setMsg(null) } catch (e) { note('err', e.message) } finally { setBusy('') } }
       const doKey = async (name) => { setBusy(t('busy.working')); try { await api('/input', { kind: 'key', name, device: targetId }) } catch (e) { note('err', e.message) } finally { setBusy('') } }
       const doText = async () => { if (!text.trim()) return; setBusy(t('busy.working')); try { await api('/input', { kind: 'text', text, device: targetId }); note('ok', t('msg.sent')) } catch (e) { note('err', e.message) } finally { setBusy('') } }
@@ -704,6 +726,13 @@ window.__ModuleLoader__.load({
       }, [devices, targetKey, active, onlineDevices])
       const targetId = targetDevice ? (targetDevice.key || targetDevice.serial) : ''
       const targetLabel = targetDevice ? (targetDevice.name || targetDevice.model || targetDevice.key) : ''
+      // 切换设备时，自动打开它真实的默认目录（眼镜→/sdcard/RKDwnload，其它→Download/RemoteControl）。
+      const targetKind = targetDevice ? (targetDevice.kind || (/glasses|rg[_-]?glasses|rokid|yodaos/i.test((targetDevice.model || '') + ' ' + (targetDevice.name || '')) ? 'glasses' : /tv|电视|盒子|box|mitv/i.test((targetDevice.model || '') + ' ' + (targetDevice.name || '')) ? 'tv' : 'phone')) : 'phone'
+      useEffect(() => {
+        if (targetId && targetDevice && targetDevice.state === 'device') loadBrowse(defDest(targetKind))
+        else { setBrowsePath(''); setBrowseEntries([]) }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [targetId])
 
       // ---- 头部：左上设备列表 / 右上连接设备，都可点开成抽屉 ----
       // （header 在 deviceSection / addSection 定义之后才创建，见文件末尾。）
@@ -913,10 +942,55 @@ window.__ModuleLoader__.load({
         h('span', { style: { fontSize: 10.5, color: C.text3, whiteSpace: 'nowrap' } }, targetDevice ? targetDevice.serial : ''),
       )
 
+      // AIUI 工程部署（挪到「发送文件」页，仅眼镜显示）
+      const aixBlock = targetKind === 'glasses' ? h('div', { style: { marginTop: 14, padding: 10, border: `1px solid ${C.border3}`, borderRadius: 8, background: C.layer } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } },
+          h('span', { style: { fontWeight: 600, fontSize: 12 } }, '🧩 AIUI 工程部署（真机测试）'),
+          h('button', { style: { ...S.ghost(disabled), height: 24, padding: '0 8px', fontSize: 11 }, onClick: doAixInfo, disabled: !!aixBusy }, '读取眼镜状态'),
+        ),
+        h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6, lineHeight: 1.5 } }, '选电脑上的 AIUI 工程目录（含 app.json）或 .aix 文件。若提示 Developer Mode disabled，先点「开启开发者模式」。'),
+        h('div', { style: S.row },
+          h('input', { style: S.input, placeholder: '/Users/you/my-agent 或 ./bundle.aix', value: aixPath, onChange: (e) => setAixPath(e.target.value) }),
+          h('button', { style: { ...S.ghost(disabled), whiteSpace: 'nowrap' }, onClick: async () => { try { const v = await api('/pick', { kind: 'folder' }); if (v.ok && v.path) setAixPath(v.path) } catch (e) { note('err', e.message) } }, disabled }, '浏览目录'),
+          h('button', { style: { ...S.ghost(disabled), whiteSpace: 'nowrap' }, onClick: async () => { try { const v = await api('/pick', { kind: 'file' }); if (v.ok && v.path) setAixPath(v.path) } catch (e) { note('err', e.message) } }, disabled }, '选 .aix'),
+        ),
+        h('div', { style: { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' } },
+          h('button', { style: { ...S.primary(disabled), height: 30 }, onClick: () => doAix('install'), disabled }, aixBusy === 'install' ? '部署中…' : '部署到眼镜'),
+          h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('set-dev'), disabled }, aixBusy === 'set-dev' ? '开启中…' : '开启开发者模式'),
+          h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('launch'), disabled }, '打开页面'),
+          h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('show'), disabled }, '查看定义'),
+          h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('check'), disabled }, '检查'),
+        ),
+        aixOut ? h('pre', { style: { ...S.pre, marginTop: 8, maxHeight: 200, minHeight: 40 } }, aixOut) : null,
+      ) : null
+
       const filesBody = h('div', null,
         targetPicker,
-        h('label', { style: S.label }, t('files.dest')),
-        h('input', { style: S.input, value: dest, onChange: (e) => setDest(e.target.value) }),
+        h('div', { style: S.section }, '选择发送目标（设备真实目录）'),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } },
+          h('button', { style: { ...S.ghost(disabled), height: 28, padding: '0 8px', flex: '0 0 auto' }, onClick: () => loadBrowse(browseParent || '/'), disabled: browseBusy || !targetId || !browsePath || browsePath === '/' }, '⬆ 上一级'),
+          h('div', { style: { flex: '1 1 auto', minWidth: 0, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: browsePath || dest }, browsePath || dest || '(未选择设备)'),
+          h('button', { style: { ...S.ghost(disabled), height: 28, padding: '0 8px', flex: '0 0 auto' }, onClick: () => loadBrowse(browsePath || dest), disabled: browseBusy || !targetId }, '刷新'),
+        ),
+        h('div', { style: { maxHeight: 220, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, background: C.layer } },
+          browseBusy
+            ? h('div', { style: { padding: 12, fontSize: 11.5, color: C.text3 } }, '读取目录中…')
+            : browseErr
+              ? h('div', { style: { padding: 12, fontSize: 11.5, color: C.danger } }, '读取失败：' + browseErr)
+              : browseEntries.length
+                ? browseEntries.map((e, i) => h('div', {
+                    key: 'b' + i + '-' + e.name,
+                    style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderTop: i ? `1px solid ${C.border}` : 'none', cursor: e.dir ? 'pointer' : 'default' },
+                    onClick: e.dir ? () => loadBrowse(joinPath(browsePath, e.name)) : undefined,
+                    title: e.name,
+                  },
+                    h('span', { style: { color: e.dir ? C.primary : C.text3, display: 'inline-flex', flex: '0 0 auto' } }, h(Ic, { name: e.dir ? 'folder' : 'file', size: 14 })),
+                    h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5 } }, e.name),
+                    e.dir ? null : h('span', { style: { fontSize: 10, color: C.text3, flex: '0 0 auto' } }, fmtSize(e.size)),
+                  ))
+                : h('div', { style: { padding: 12, fontSize: 11.5, color: C.text3 } }, targetId ? '空目录' : '请先选择设备'),
+        ),
+        h('div', { style: { fontSize: 11, color: C.text2, marginTop: 6, lineHeight: 1.5 } }, '发送目标：', h('span', { style: { fontFamily: 'ui-monospace, Menlo, monospace', color: C.primary } }, dest || '—'), '　点文件夹可进入，选到想要的目录再发送。'),
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 } },
           h('button', { style: S.tile, onClick: () => fileRef.current && fileRef.current.click(), disabled }, h('span', { style: S.tileIcon }, h(Ic, { name: 'folder', size: 18 })), h('span', { style: S.tileTitle }, t('files.send')), h('span', { style: S.tileSub }, t('files.sendSub'))),
           h('button', { style: S.tile, onClick: () => apkRef.current && apkRef.current.click(), disabled }, h('span', { style: S.tileIcon }, h(Ic, { name: 'apk', size: 18 })), h('span', { style: S.tileTitle }, t('files.install')), h('span', { style: S.tileSub }, t('files.installSub'))),
@@ -932,8 +1006,7 @@ window.__ModuleLoader__.load({
             h('div', { style: { height: '100%', width: `${installProgress.pct || 0}%`, background: C.primary, transition: 'width 0.25s ease' } }),
           ),
         ) : null,
-        h('button', { style: { ...S.ghost(disabled), width: '100%', marginTop: 10 }, onClick: refreshDir, disabled }, h(Ic, { name: 'refresh' }), t('files.refresh')),
-        h('pre', { style: { ...S.pre, marginTop: 12 } }, listing || t('files.empty')),
+        aixBlock,
       )
 
       const curKind = targetDevice
@@ -982,26 +1055,7 @@ window.__ModuleLoader__.load({
       const controlBody = h('div', null,
         targetPicker,
         keysBlock,
-        isGlasses ? h('div', { style: { marginTop: 10, padding: 10, border: `1px solid ${C.border3}`, borderRadius: 8, background: C.layer } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } },
-            h('span', { style: { fontWeight: 600, fontSize: 12 } }, '🧩 AIUI 工程部署（真机测试）'),
-            h('button', { style: { ...S.ghost(disabled), height: 24, padding: '0 8px', fontSize: 11 }, onClick: doAixInfo, disabled: !!aixBusy }, '读取眼镜状态'),
-          ),
-          h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6, lineHeight: 1.5 } }, '选电脑上的 AIUI 工程目录（含 app.json）或 .aix 文件。若提示 Developer Mode disabled，先点「开启开发者模式」。'),
-          h('div', { style: S.row },
-            h('input', { style: S.input, placeholder: '/Users/you/my-agent 或 ./bundle.aix', value: aixPath, onChange: (e) => setAixPath(e.target.value) }),
-            h('button', { style: { ...S.ghost(disabled), whiteSpace: 'nowrap' }, onClick: async () => { try { const v = await api('/pick', { kind: 'folder' }); if (v.ok && v.path) setAixPath(v.path) } catch (e) { note('err', e.message) } }, disabled }, '浏览目录'),
-            h('button', { style: { ...S.ghost(disabled), whiteSpace: 'nowrap' }, onClick: async () => { try { const v = await api('/pick', { kind: 'file' }); if (v.ok && v.path) setAixPath(v.path) } catch (e) { note('err', e.message) } }, disabled }, '选 .aix'),
-          ),
-          h('div', { style: { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' } },
-            h('button', { style: { ...S.primary(disabled), height: 30 }, onClick: () => doAix('install'), disabled }, aixBusy === 'install' ? '部署中…' : '部署到眼镜'),
-            h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('set-dev'), disabled }, aixBusy === 'set-dev' ? '开启中…' : '开启开发者模式'),
-            h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('launch'), disabled }, '打开页面'),
-            h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('show'), disabled }, '查看定义'),
-            h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('check'), disabled }, '检查'),
-          ),
-          aixOut ? h('pre', { style: { ...S.pre, marginTop: 8, maxHeight: 200, minHeight: 40 } }, aixOut) : null,
-        ) : null,
+        isGlasses ? h('div', { style: { marginTop: 10, fontSize: 11, color: C.text3, lineHeight: 1.5 } }, '🧩 AIUI 工程部署已移到「发送文件」标签页（选眼镜后可在那里部署工程做真机测试）。') : null,
         h('div', { style: S.section }, t('ctl.text')),
         h('div', { style: S.row },
           h('input', { style: S.input, placeholder: t('ctl.textPlaceholder'), value: text, onChange: (e) => setText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') doText() } }),
@@ -1163,6 +1217,7 @@ window.__ModuleLoader__.load({
         ),
         curOnline ? h('button', { style: { ...(keOn ? S.primary(false) : S.ghost(disabled)), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => doKeepAwake(!keOn), disabled: busy === 'keepawake' }, keOn ? '🔆 防休眠' : '防休眠') : null,
         curOnline ? h('button', { style: { ...S.ghost(disabled), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => setLiveView((v) => !v) }, liveView ? '暂停' : '实时') : null,
+        curOnline ? h('button', { style: { ...S.primary(false), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => setBigView(true), title: '放大画面，方便操控' }, '⤢ 放大') : null,
         curOnline ? h('button', { style: { ...S.ghost(busy === 'pcstream'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doPcStream, disabled: busy === 'pcstream', title: '把这台设备的屏幕显示电脑画面' }, '💻 投电脑') : null,
       )
 
@@ -1235,7 +1290,32 @@ window.__ModuleLoader__.load({
         chatBody,
       )
 
-      return h('div', { style: S.root, 'data-phone-remote': '' }, header, toast, body,
+      // 放大画面弹窗：方便在大图上直接点按操控。
+      const bigModal = (bigView && curOnline) ? h('div', {
+        style: { position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 12 },
+        onClick: () => setBigView(false),
+      },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, color: '#fff', fontSize: 12.5, alignSelf: 'stretch', justifyContent: 'center' } },
+          h('span', null, `${targetDevice ? (targetDevice.name || targetDevice.model || '设备') : ''} · 放大画面（点画面即点设备）`),
+          h('button', { style: { background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 12 }, onClick: (e) => { e.stopPropagation(); setBigView(false) } }, '关闭 ✕'),
+        ),
+        h('div', {
+          style: { position: 'relative', maxWidth: '96vw', maxHeight: '84vh', aspectRatio: String(aspect), background: '#000', borderRadius: 8, overflow: 'hidden', cursor: 'crosshair', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' },
+          onClick: (e) => { e.stopPropagation(); doTapFrac(e) },
+        },
+          h('img', {
+            key: 'big-' + targetId + '-' + liveNonce,
+            src: `${API}/live?device=${encodeURIComponent(targetId || '')}&q=9&n=${liveNonce}`,
+            alt: '放大画面',
+            onError: () => { setTimeout(() => setLiveNonce((x) => x + 1), 2500) },
+            style: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' },
+          }),
+          tapPing ? h('span', { style: { position: 'absolute', left: tapPing.x - 14, top: tapPing.y - 14, width: 28, height: 28, borderRadius: 14, border: '2px solid rgba(43,108,255,0.95)', pointerEvents: 'none' } }) : null,
+        ),
+        h('div', { style: { marginTop: 8, color: '#aaa', fontSize: 11 } }, '点空白处或「关闭」退出放大'),
+      ) : null
+
+      return h('div', { style: S.root, 'data-phone-remote': '' }, header, toast, body, bigModal,
         drawerPanel('devices', '所有设备', devicesPanel),
         drawerPanel('connect', '连接新设备', addSection))
     }
