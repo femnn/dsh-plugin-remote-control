@@ -860,6 +860,7 @@ window.__ModuleLoader__.load({
       const header = h('div', { style: { ...S.top, position: 'relative' } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
           h('div', { style: { flex: '1 1 auto', fontSize: 14, fontWeight: 700 } }, '远程操控'),
+          h('button', { style: { ...S.iconBtn(disabled), width: 28, height: 28 }, title: '刷新本插件（重载客户端代码）', 'aria-label': '刷新', onClick: () => { try { window.location.reload() } catch { /* ignore */ } } }, h(Ic, { name: 'refresh', size: 15 })),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' } },
             onlineDevices.map((d) => d.battery ? h('span', {
               key: 'bat' + d.key,
@@ -873,8 +874,12 @@ window.__ModuleLoader__.load({
 
       const keyBtn = (name, icon, label) => h('button', { key: name, style: S.keyBtn, onClick: () => doKey(name), disabled }, h(Ic, { name: icon, size: 18 }), h('span', null, label))
       // 多设备切换条：选哪台，下面所有操作就打给哪台。
-      // 设备选择已在左侧列表完成，这里不再重复放 chip 行（省出竖向空间给控制板）。
-      const targetPicker = null
+      // 设备选择在左侧列表完成。发送文件时会显示一个「发到哪台」横幅，避免发错设备。
+      const targetPicker = h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '7px 9px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.layer, marginBottom: 10, fontSize: 12 } },
+        h('span', { style: S.dot(Boolean(targetDevice && targetDevice.state === 'device')) }),
+        h('span', { style: { flex: '1 1 auto', fontWeight: 600, color: C.text } }, `发送到：${targetDevice ? (targetDevice.name || targetDevice.model || '设备') : '未选择设备'}${targetDevice && targetDevice.state !== 'device' ? '（离线）' : ''}`),
+        h('span', { style: { fontSize: 10.5, color: C.text3, whiteSpace: 'nowrap' } }, targetDevice ? targetDevice.serial : ''),
+      )
 
       const filesBody = h('div', null,
         targetPicker,
