@@ -1011,6 +1011,11 @@ export function apply(ctx, config) {
     const serial = await resolveTarget(payload.device)
     if (!serial) throw Object.assign(new Error('还没有连接眼镜'), { status: 409 })
     const action = String(payload.action || 'install')
+    // 开启开发者模式不需要工程路径。
+    if (action === 'set-dev') {
+      const r = await runAix(['device', 'set-dev', '--serial', serial], 60000)
+      return { ok: r.ok, action, serial, code: r.code, output: `${r.stdout || ''}${r.stderr || ''}`.trim() }
+    }
     const input = String(payload.path || '').trim()
     if (!input) throw Object.assign(new Error('请填写本地 AIUI 工程目录或 .aix 文件路径'), { status: 400 })
     if (!existsSync(input)) throw Object.assign(new Error(`路径不存在：${input}`), { status: 400 })

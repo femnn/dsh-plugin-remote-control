@@ -649,8 +649,8 @@ window.__ModuleLoader__.load({
       const toggleStream = (id) => setStreamKeys((ks) => ks.includes(id) ? ks.filter((x) => x !== id) : [...ks, id])
       const doAix = async (action) => {
         if (!targetId) { note('err', '请先连接眼镜'); return }
-        if (!aixPath.trim()) { note('err', '请填写本地 AIUI 工程目录或 .aix 文件路径'); return }
-        setAixBusy(action); setAixOut('正在' + (action === 'launch' ? '打开页面…' : action === 'show' ? '查看定义…' : action === 'check' ? '静态检查…' : '部署到眼镜…'))
+        if (action !== 'set-dev' && !aixPath.trim()) { note('err', '请填写本地 AIUI 工程目录或 .aix 文件路径'); return }
+        setAixBusy(action); setAixOut('正在' + (action === 'launch' ? '打开页面…' : action === 'show' ? '查看定义…' : action === 'check' ? '静态检查…' : action === 'set-dev' ? '开启开发者模式…' : '部署到眼镜…'))
         try {
           const v = await api('/aix-deploy', { device: targetId, action, path: aixPath.trim() })
           setAixOut((v.ok ? '✅ ' : '❌ ') + (v.output || '(无输出)'))
@@ -987,7 +987,7 @@ window.__ModuleLoader__.load({
             h('span', { style: { fontWeight: 600, fontSize: 12 } }, '🧩 AIUI 工程部署（真机测试）'),
             h('button', { style: { ...S.ghost(disabled), height: 24, padding: '0 8px', fontSize: 11 }, onClick: doAixInfo, disabled: !!aixBusy }, '读取眼镜状态'),
           ),
-          h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6, lineHeight: 1.5 } }, '选电脑上的 AIUI 工程目录（含 app.json）或 .aix 文件；云端 AIUI Studio 的工程请先导出到本机。'),
+          h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6, lineHeight: 1.5 } }, '选电脑上的 AIUI 工程目录（含 app.json）或 .aix 文件。若提示 Developer Mode disabled，先点「开启开发者模式」。'),
           h('div', { style: S.row },
             h('input', { style: S.input, placeholder: '/Users/you/my-agent 或 ./bundle.aix', value: aixPath, onChange: (e) => setAixPath(e.target.value) }),
             h('button', { style: { ...S.ghost(disabled), whiteSpace: 'nowrap' }, onClick: async () => { try { const v = await api('/pick', { kind: 'folder' }); if (v.ok && v.path) setAixPath(v.path) } catch (e) { note('err', e.message) } }, disabled }, '浏览目录'),
@@ -995,6 +995,7 @@ window.__ModuleLoader__.load({
           ),
           h('div', { style: { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' } },
             h('button', { style: { ...S.primary(disabled), height: 30 }, onClick: () => doAix('install'), disabled }, aixBusy === 'install' ? '部署中…' : '部署到眼镜'),
+            h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('set-dev'), disabled }, aixBusy === 'set-dev' ? '开启中…' : '开启开发者模式'),
             h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('launch'), disabled }, '打开页面'),
             h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('show'), disabled }, '查看定义'),
             h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('check'), disabled }, '检查'),
