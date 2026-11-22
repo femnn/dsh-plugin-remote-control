@@ -307,6 +307,14 @@ export function apply(ctx, config) {
     }
     return text.replace(/:\d+$/, '')
   }
+  /** 判断设备类型：glasses / tv / tablet / phone，用于列表图标与操控面板适配。 */
+  function deviceKind(d) {
+    const s = `${(d && d.model) || ''} ${(d && d.name) || ''} ${(d && d.product) || ''}`.toLowerCase()
+    if (/glasses|rg[_-]?glasses|rokid|yodaos|ar\s*lite|ar\s*studio/.test(s)) return 'glasses'
+    if (/tv|电视|盒子|box|mitv|投影|projector/.test(s)) return 'tv'
+    if (/pad|tablet|平板/.test(s)) return 'tablet'
+    return 'phone'
+  }
   /**
    * 名册里取设备的名字。
    * 按多种身份依次查，保证手机换端口、换 IP、换 mDNS 实例名后名字都还在：
@@ -810,7 +818,7 @@ export function apply(ctx, config) {
         d.battery = val
       } catch { /* ignore */ }
     }
-    return { adbPath: bin, adbFound: Boolean(bin), devices: finalDevices, active, notes: watchNotes(), keepAwake: [...watcher.keepAwake] }
+    return { adbPath: bin, adbFound: Boolean(bin), devices: finalDevices.map((d) => ({ ...d, kind: deviceKind(d) })), active, notes: watchNotes(), keepAwake: [...watcher.keepAwake] }
   }
 
   async function discover() {
@@ -979,6 +987,49 @@ export function apply(ctx, config) {
     return { reset: true, devices: (await adbDevices()).map((d) => ({ ...d, active: false, name: names[d.serial] || '' })) }
   }
 
+  // ---- AIUI / Rokid 工程部署（调用官方 aix CLI，把本地工程装到眼镜做真机测试）----
+  function resolveAix() {
+    const cands = [join(homedir(), '.npm-global/bin/aix'), '/usr/local/bin/aix', '/opt/homebrew/bin/aix']
+    for (const c of cands) { try { if (existsSync(c)) return c } catch { /* ignore */ } }
+    return 'aix'
+  }
+  function runAix(args, timeout = 600000) {
+    return new Promise((resolve) => {
+      const adbBin = resolveAdb(cfg)
+      const env = { ...process.env, PATH: `${dirname(adbBin)}:${join(homedir(), '.npm-global/bin')}:${process.env.PATH || ''}` }
+      let out = ''; let err = ''
+      let child
+      try { child = spawn(resolveAix(), args, { env }) } catch (e) { return resolve({ ok: false, code: -1, stdout: '', stderr: String(e) }) }
+      const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* ignore */ } }, timeout)
+      child.stdout && child.stdout.on('data', (d) => { out += d })
+      child.stderr && child.stderr.on('data', (d) => { err += d })
+      child.on('close', (code) => { clearTimeout(timer); resolve({ ok: code === 0, code, stdout: out, stderr: err }) })
+      child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, code: -1, stdout: out, stderr: String(e) }) })
+    })
+  }
+  async function aixDeploy(payload) {
+    const serial = await resolveTarget(payload.device)
+    if (!serial) throw Object.assign(new Error('还没有连接眼镜'), { status: 409 })
+    const action = String(payload.action || 'install')
+    const input = String(payload.path || '').trim()
+    if (!input) throw Object.assign(new Error('请填写本地 AIUI 工程目录或 .aix 文件路径'), { status: 400 })
+    if (!existsSync(input)) throw Object.assign(new Error(`路径不存在：${input}`), { status: 400 })
+    let args
+    if (action === 'install') args = ['install', input, '--serial', serial]
+    else if (action === 'launch') args = ['launch-page', input, ...(payload.page ? [String(payload.page)] : []), '--serial', serial]
+    else if (action === 'show') args = ['show', input]
+    else if (action === 'check') args = ['check', input]
+    else throw Object.assign(new Error('不支持的操作'), { status: 400 })
+    const r = await runAix(args)
+    return { ok: r.ok, action, input, serial, code: r.code, output: `${r.stdout || ''}${r.stderr || ''}`.trim() }
+  }
+  async function aixDevice(payload) {
+    const serial = await resolveTarget(payload.device)
+    if (!serial) throw Object.assign(new Error('还没有连接眼镜'), { status: 409 })
+    const r = await runAix(['device', '--serial', serial], 30000)
+    return { ok: r.ok, serial, output: `${r.stdout || ''}${r.stderr || ''}`.trim() }
+  }
+
   async function reconnect(device) {
     const serial = String(device || active || '').trim()
     if (!serial) throw Object.assign(new Error('缺少设备'), { status: 400 })
@@ -1083,6 +1134,7 @@ export function apply(ctx, config) {
     reconnects: 0,
     keepAwake: new Set(),     // 需要防休眠的设备 serial
     lastWake: new Map(),      // serial -> at
+    lastGlassesScan: 0,       // 上次扫眼镜的时间
   }
   function watchNote(key, reason) {
     watcher.notes.set(key, { reason, at: Date.now() })
@@ -1127,6 +1179,8 @@ export function apply(ctx, config) {
       // 设备换了 IP（网络切换、DHCP 变化）后，旧 IP 会一直离线。
       // 这里用 mDNS 重新问一次「这台设备现在在哪个 IP」，再连过去。
       await reconnectByMdns()
+      // 眼镜走 adb tcpip 5555，不广播 mDNS：换网络后 IP 会变，得主动扫当前网段的 5555 找回。
+      await reconnectGlasses()
       // 防休眠：对开启保活的设备，定期补一次「保持连接」，
       // 但**绝不再发 KEYCODE_WAKEUP**——唤醒键会触发人脸/指纹「智能解锁」，
       // 用户断开串流后手机还会自己亮、显示解锁成功，就是这里造成的。
@@ -1140,6 +1194,50 @@ export function apply(ctx, config) {
         adb(withTarget(['shell', 'dumpsys', 'deviceidle', 'unforce', '>/dev/null 2>&1'], serial), { timeout: 6000 }).catch(() => {})
       }
     } catch { /* 看护失败不影响面板 */ } finally { watcher.running = false }
+  }
+
+  /**
+   * 眼镜（Rokid）跨网络自动重连：眼镜经 adb tcpip 5555 连接，不广播 mDNS，
+   * 换 WiFi/换网段后 IP 会变。这里记住「曾经连过的眼镜」，一旦它离线，
+   * 就扫当前网段的 5555 端口，逐个 adb connect，用 model 认出眼镜并接管。
+   */
+  async function reconnectGlasses() {
+    if (Date.now() - watcher.lastGlassesScan < 45000) return
+    // 名册里有没有「眼镜」这个身份，以及它现在是否离线
+    const hasGlasses = Object.values(roster).some((e) => /glasses|rg[_-]?glasses|rokid|yodaos/i.test(`${e.model || ''} ${e.name || ''}`))
+    if (!hasGlasses) return
+    const raw = await adbDevices()
+    const onlineGlasses = raw.some((d) => d.state === 'device' && /glasses|rg[_-]?glasses|rokid|yodaos/i.test(d.model || ''))
+    if (onlineGlasses) { watcher.lastGlassesScan = Date.now(); return }
+    watcher.lastGlassesScan = Date.now()
+    const myIp = localIp()
+    if (!/^\d+\.\d+\.\d+\.\d+$/.test(myIp)) return
+    const prefix = myIp.split('.').slice(0, 3).join('.')
+    // 并发探测本网段 :5555
+    const probe = (ip) => new Promise((resolve) => {
+      const s = net.connect({ host: ip, port: 5555 })
+      const done = (ok) => { try { s.destroy() } catch { /* ignore */ } resolve(ok ? ip : null) }
+      s.setTimeout(500)
+      s.once('connect', () => done(true))
+      s.once('timeout', () => done(false))
+      s.once('error', () => done(false))
+    })
+    const ips = Array.from({ length: 254 }, (_, i) => `${prefix}.${i + 1}`)
+    const hits = (await Promise.all(ips.map(probe))).filter(Boolean)
+    for (const ip of hits) {
+      const addr = `${ip}:5555`
+      if (raw.some((d) => d.serial === addr && d.state === 'device')) continue
+      await adb(['connect', addr], { timeout: 8000 }).catch(() => {})
+      const chk = await adb(['-s', addr, 'shell', 'getprop', 'ro.product.model'], { timeout: 6000 }).catch(() => null)
+      const model = (chk && chk.stdout ? chk.stdout : '').trim()
+      if (/glasses|rg[_-]?glasses|rokid|yodaos/i.test(model)) {
+        watchNote(addr, `眼镜已重新连接（${model || 'glasses'} @ ${ip}）`)
+        break
+      } else if (chk && chk.ok) {
+        // 不是眼镜的普通设备，不接管
+        await adb(['disconnect', addr], { timeout: 4000 }).catch(() => {})
+      }
+    }
   }
 
   /**
@@ -1319,6 +1417,8 @@ export function apply(ctx, config) {
         return { installed: true, filename, bytes: size, output: text, device: t }
       }
       const remote = `${destDir.replace(/\/$/, '')}/${filename}`
+      // 确保目标目录存在（否则 push 会失败），并创建一个专门的「远程操控」文件夹方便查找。
+      await adb(withTarget(['shell', `mkdir -p "${destDir.replace(/\/$/, '')}"`], t), { timeout: 8000 }).catch(() => {})
       const r = await adb(withTarget(['push', file, remote], t), { timeout: 600000 })
       if (!r.ok) throw Object.assign(new Error(String(r.stderr || '推送失败')), { status: 500 })
       // 通知媒体库扫描，让文件管理 / 相册立刻能看到新文件（否则可能要等系统自己扫）。
@@ -2551,6 +2651,8 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     if (path === '/reconnect') { const b = await readJson(req); return ok(res, await reconnect(b.device)) }
     if (path === '/rename') { const b = await readJson(req); return ok(res, await rename(b.device, b.name)) }
     if (path === '/adb-reset') return ok(res, await adbReset())
+    if (path === '/aix-deploy') { const b = await readJson(req); return ok(res, await aixDeploy(b)) }
+    if (path === '/aix-device') { const b = await readJson(req); return ok(res, await aixDevice(b)) }
     if (path === '/command') { const b = await readJson(req); return ok(res, await runCommand(b.device, b.text)) }
     if (path === '/watcher') return ok(res, { notes: watchNotes(), reconnects: watcher.reconnects })
     if (path === '/companion') { const b = await readJson(req); return ok(res, await companionProbe(b.ip)) }

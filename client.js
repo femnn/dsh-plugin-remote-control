@@ -185,6 +185,11 @@ window.__ModuleLoader__.load({
         apk: [h('rect', { key: 'a', x: 4, y: 4, width: 16, height: 16, rx: 3 }), h('path', { key: 'b', d: 'M12 8v6M9 11l3 3 3-3' })],
         camera: [h('rect', { key: 'a', x: 3, y: 7, width: 18, height: 13, rx: 2.5 }), h('circle', { key: 'b', cx: 12, cy: 13, r: 3.4 })],
         back: [h('path', { key: 'a', d: 'M15 18l-6-6 6-6' })],
+        up: [h('path', { key: 'a', d: 'M6 15l6-6 6 6' })],
+        down: [h('path', { key: 'a', d: 'M6 9l6 6 6-6' })],
+        left: [h('path', { key: 'a', d: 'M15 6l-6 6 6 6' })],
+        right: [h('path', { key: 'a', d: 'M9 6l6 6-6 6' })],
+        menu: [h('line', { key: 'a', x1: 4, y1: 7, x2: 20, y2: 7 }), h('line', { key: 'b', x1: 4, y1: 12, x2: 20, y2: 12 }), h('line', { key: 'c', x1: 4, y1: 17, x2: 20, y2: 17 })],
         home: [h('path', { key: 'a', d: 'M4 11l8-7 8 7v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z' })],
         recents: [h('rect', { key: 'a', x: 5, y: 5, width: 14, height: 14, rx: 2.5 })],
         power: [h('path', { key: 'a', d: 'M12 3v9' }), h('path', { key: 'b', d: 'M7.5 6.5a7 7 0 1 0 9 0' })],
@@ -194,6 +199,8 @@ window.__ModuleLoader__.load({
         terminal: [h('rect', { key: 'a', x: 3, y: 5, width: 18, height: 14, rx: 2.5 }), h('path', { key: 'b', d: 'M7 10l3 2-3 2M13 15h4' })],
         wifi: [h('path', { key: 'a', d: 'M3 9a15 15 0 0 1 18 0' }), h('path', { key: 'b', d: 'M6 12.5a10 10 0 0 1 12 0' }), h('circle', { key: 'c', cx: 12, cy: 17, r: 1.4, fill: 'currentColor', stroke: 'none' })],
         phone: [h('rect', { key: 'a', x: 6, y: 2.5, width: 12, height: 19, rx: 2.6 }), h('line', { key: 'b', x1: 10.5, y1: 18.2, x2: 13.5, y2: 18.2 })],
+        tv: [h('rect', { key: 'a', x: 3, y: 4, width: 18, height: 12, rx: 2 }), h('line', { key: 'b', x1: 9, y1: 20, x2: 15, y2: 20 }), h('line', { key: 'c', x1: 12, y1: 16, x2: 12, y2: 20 })],
+        glasses: [h('circle', { key: 'a', cx: 7, cy: 13, r: 3.6 }), h('circle', { key: 'b', cx: 17, cy: 13, r: 3.6 }), h('path', { key: 'c', d: 'M10.6 13c.7-.6 2.1-.6 2.8 0M3.4 12l1.2-2.2M20.6 12l-1.2-2.2' })],
         trash: [h('path', { key: 'a', d: 'M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13' })],
         qr: [h('rect', { key: 'a', x: 3, y: 3, width: 7, height: 7, rx: 1 }), h('rect', { key: 'b', x: 14, y: 3, width: 7, height: 7, rx: 1 }), h('rect', { key: 'c', x: 3, y: 14, width: 7, height: 7, rx: 1 }), h('path', { key: 'd', d: 'M14 14h3v3M20 20h1M17 20v1' })],
         plus: [h('path', { key: 'a', d: 'M12 5v14M5 12h14' })],
@@ -277,7 +284,7 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('control')
       const [busy, setBusy] = useState('')
       const [msg, setMsg] = useState(null)
-      const [dest, setDest] = useState('/sdcard/Download')
+      const [dest, setDest] = useState('/sdcard/Download/RemoteControl')
       const [listing, setListing] = useState('')
       const [shot, setShot] = useState('')
       const [liveView, setLiveView] = useState(true)
@@ -288,6 +295,10 @@ window.__ModuleLoader__.load({
       const [aiText, setAiText] = useState('')
       const [aiBusy, setAiBusy] = useState(false)
       const [aiResult, setAiResult] = useState(null)
+      // AIUI 工程部署（Rokid 眼镜真机测试，调用官方 aix）
+      const [aixPath, setAixPath] = useState('')
+      const [aixOut, setAixOut] = useState('')
+      const [aixBusy, setAixBusy] = useState('')
       // 串流的设备（key 列表）：每台设备独立开关，想看哪台看哪台。
       const [streamKeys, setStreamKeys] = useState([])
       const [liveNonce, setLiveNonce] = useState(0)
@@ -610,7 +621,7 @@ window.__ModuleLoader__.load({
         // 发送和安装都显示进度条，避免「点了没反应」的错觉。
         setInstallProgress({ pct: 0, phase: 'uploading', message: install ? '准备安装…' : '准备发送…' })
         try { const results = []; for (const f of list) results.push(await uploadOne(f, install)); const last = results[results.length - 1]
-          note('ok', install ? `已安装：${last.filename}（${(last.bytes / 1048576).toFixed(1)} MB）` : `已发送 ${results.length} 个 → ${last.remote}`)
+          note('ok', install ? `已安装：${last.filename}（${(last.bytes / 1048576).toFixed(1)} MB）` : `已发送 ${results.length} 个 → ${last.remote}\n手机里位置：${last.remote}\n（文件管理里进入 Download/RemoteControl 文件夹即可找到）`)
           if (!install) { try { const v = await api('/list', { path: dest, device: targetId }); setListing(v.listing) } catch { /* ignore */ } }
         } catch (e) { note('err', e.message) } finally { setBusy(''); setInstallProgress(null); if (fileRef.current) fileRef.current.value = ''; if (apkRef.current) apkRef.current.value = '' }
       }
@@ -636,6 +647,22 @@ window.__ModuleLoader__.load({
         catch (e) { note('err', e.message); setAiResult({ error: e.message }) } finally { setAiBusy(false) }
       }
       const toggleStream = (id) => setStreamKeys((ks) => ks.includes(id) ? ks.filter((x) => x !== id) : [...ks, id])
+      const doAix = async (action) => {
+        if (!targetId) { note('err', '请先连接眼镜'); return }
+        if (!aixPath.trim()) { note('err', '请填写本地 AIUI 工程目录或 .aix 文件路径'); return }
+        setAixBusy(action); setAixOut('正在' + (action === 'launch' ? '打开页面…' : action === 'show' ? '查看定义…' : action === 'check' ? '静态检查…' : '部署到眼镜…'))
+        try {
+          const v = await api('/aix-deploy', { device: targetId, action, path: aixPath.trim() })
+          setAixOut((v.ok ? '✅ ' : '❌ ') + (v.output || '(无输出)'))
+          note(v.ok ? 'ok' : 'err', v.ok ? 'AIUI 操作完成' : 'AIUI 操作失败')
+        } catch (e) { setAixOut('❌ ' + e.message); note('err', e.message) } finally { setAixBusy('') }
+      }
+      const doAixInfo = async () => {
+        if (!targetId) return
+        setAixBusy('device'); setAixOut('读取眼镜 AIUI 状态…')
+        try { const v = await api('/aix-device', { device: targetId }); setAixOut(v.output || '(无输出)') }
+        catch (e) { setAixOut('❌ ' + e.message) } finally { setAixBusy('') }
+      }
       const doPcStream = async () => {
         if (!targetId) { note('err', '请先选择目标设备'); return }
         setBusy('pcstream')
@@ -793,9 +820,9 @@ window.__ModuleLoader__.load({
         ),
         h('div', { role: pendingPair ? 'status' : undefined, style: { marginTop: 12, color: C.text } },
           pendingPair ? '配对已完成，继续连接' : '连接地址（配对时可预填）'),
-        h('label', { style: { ...S.label, marginTop: 4 }, htmlFor: 'phone-remote-connect-address' }, '手机「无线调试」主页面的 IP 地址和端口'),
+        h('label', { style: { ...S.label, marginTop: 4 }, htmlFor: 'phone-remote-connect-address' }, '设备 IP:端口（手机填「无线调试」页面的 IP:端口；Rokid 眼镜填 眼镜IP:5555）'),
         h('div', { style: S.row },
-          h('input', { id: 'phone-remote-connect-address', style: S.input, placeholder: '192.168.1.50:37123', value: manualAddr, onChange: (e) => setManualAddr(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') doConnect(manualAddr, pendingPair) } }),
+          h('input', { id: 'phone-remote-connect-address', style: S.input, placeholder: '192.168.1.50:37123 或 眼镜 192.168.1.80:5555', value: manualAddr, onChange: (e) => setManualAddr(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') doConnect(manualAddr, pendingPair) } }),
           h('button', { style: S.primary(disabled), onClick: () => doConnect(manualAddr, pendingPair), disabled }, pendingPair ? '完成连接' : '直接连接'),
         ),
         pendingPair ? h('button', { style: { ...S.ghost(disabled), marginTop: 6 }, disabled, onClick: () => { setPendingPair(null); setManualAddr('') } }, '连接其他手机') : null,
@@ -873,6 +900,11 @@ window.__ModuleLoader__.load({
       )
 
       const keyBtn = (name, icon, label) => h('button', { key: name, style: S.keyBtn, onClick: () => doKey(name), disabled }, h(Ic, { name: icon, size: 18 }), h('span', null, label))
+      const doSwipe = async (x1, y1, x2, y2) => { try { await api('/input', { kind: 'swipe', x1, y1, x2, y2, ms: 200, device: targetId }); note('ok', '已滑动') } catch (e) { note('err', e.message) } }
+      const arrowBtn = (label, dx, dy) => h('button', {
+        key: 'sw' + label, style: { ...S.keyBtn, fontSize: 16 },
+        onClick: () => { const cx = 240, cy = 320, r = 90; doSwipe(cx - dx * r, cy - dy * r, cx + dx * r, cy + dy * r) }, disabled,
+      }, label)
       // 多设备切换条：选哪台，下面所有操作就打给哪台。
       // 设备选择在左侧列表完成。发送文件时会显示一个「发到哪台」横幅，避免发错设备。
       const targetPicker = h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '7px 9px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.layer, marginBottom: 10, fontSize: 12 } },
@@ -904,14 +936,70 @@ window.__ModuleLoader__.load({
         h('pre', { style: { ...S.pre, marginTop: 12 } }, listing || t('files.empty')),
       )
 
-      const isTv = Boolean(targetDevice && (/tv|电视|盒子|box|mitv/i.test((targetDevice.model || '') + ' ' + (targetDevice.name || ''))))
+      const curKind = targetDevice
+        ? (targetDevice.kind ||
+            (/glasses|rg[_-]?glasses|rokid|yodaos/i.test((targetDevice.model || '') + ' ' + (targetDevice.name || '')) ? 'glasses'
+              : /tv|电视|盒子|box|mitv/i.test((targetDevice.model || '') + ' ' + (targetDevice.name || '')) ? 'tv' : 'phone'))
+        : 'phone'
+      const isTv = curKind === 'tv'
+      const isGlasses = curKind === 'glasses'
+      const keysBlock = isGlasses
+        ? h('div', null,
+            h('div', { style: S.section }, '触控 / 滑动'),
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 } },
+              h('span'), arrowBtn('↑', 0, 1), h('span'),
+              arrowBtn('←', -1, 0),
+              h('button', { key: 'ok', style: { ...S.keyBtn, background: C.primary, color: '#fff', border: `1px solid ${C.primary}` }, onClick: () => doKey('enter'), disabled }, h(Ic, { name: 'check', size: 18 }), h('span', null, '确认')),
+              arrowBtn('→', 1, 0),
+              h('span'), arrowBtn('↓', 0, -1), h('span'),
+            ),
+            h('div', { style: S.section }, '按键'),
+            h('div', { style: S.grid3 },
+              keyBtn('back', 'back', '返回'), keyBtn('home', 'home', '主页'), keyBtn('power', 'power', '电源'),
+            ),
+          )
+        : isTv
+          ? h('div', null,
+              h('div', { style: S.section }, '方向 / 确认'),
+              h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, maxWidth: 240, margin: '0 auto' } },
+                h('span'), keyBtn('dpadUp', 'up', '上'), h('span'),
+                keyBtn('dpadLeft', 'back', '左'),
+                h('button', { key: 'ok', style: { ...S.keyBtn, background: C.primary, color: '#fff', border: `1px solid ${C.primary}` }, onClick: () => doKey('dpadCenter'), disabled }, '确定'),
+                keyBtn('dpadRight', 'right', '右'),
+                h('span'), keyBtn('dpadDown', 'down', '下'), h('span'),
+              ),
+              h('div', { style: S.section }, '按键'),
+              h('div', { style: S.grid3 },
+                keyBtn('back', 'back', '返回'), keyBtn('home', 'home', '主页'), keyBtn('menu', 'keypad', '菜单'),
+                keyBtn('volumeUp', 'volUp', '音量+'), keyBtn('volumeDown', 'volDown', '音量-'), keyBtn('power', 'power', '电源'),
+              ),
+            )
+          : h('div', null,
+              h('div', { style: S.section }, t('ctl.keys')),
+              h('div', { style: S.grid3 },
+                keyBtn('back', 'back', t('key.back')), keyBtn('home', 'home', t('key.home')), keyBtn('recents', 'recents', t('key.recents')),
+                keyBtn('power', 'power', t('key.power')), keyBtn('volumeUp', 'volUp', t('key.volUp')), keyBtn('volumeDown', 'volDown', t('key.volDown')),
+              ),
+            )
+
       const controlBody = h('div', null,
         targetPicker,
-        h('div', { style: S.section }, t('ctl.keys')),
-        h('div', { style: S.grid3 },
-          keyBtn('back', 'back', t('key.back')), keyBtn('home', 'home', t('key.home')), keyBtn('recents', 'recents', t('key.recents')),
-          keyBtn('power', 'power', t('key.power')), keyBtn('volumeUp', 'volUp', t('key.volUp')), keyBtn('volumeDown', 'volDown', t('key.volDown')),
-        ),
+        keysBlock,
+        isGlasses ? h('div', { style: { marginTop: 10, padding: 10, border: `1px solid ${C.border3}`, borderRadius: 8, background: C.layer } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } },
+            h('span', { style: { fontWeight: 600, fontSize: 12 } }, '🧩 AIUI 工程部署（真机测试）'),
+            h('button', { style: { ...S.ghost(disabled), height: 24, padding: '0 8px', fontSize: 11 }, onClick: doAixInfo, disabled: !!aixBusy }, '读取眼镜状态'),
+          ),
+          h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6, lineHeight: 1.5 } }, '填本地 AIUI 工程目录（含 app.json）或 .aix 文件路径；云端 AIUI Studio 的工程请先导出到本机。'),
+          h('input', { style: S.input, placeholder: '/Users/you/my-agent 或 ./bundle.aix', value: aixPath, onChange: (e) => setAixPath(e.target.value) }),
+          h('div', { style: { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' } },
+            h('button', { style: { ...S.primary(disabled), height: 30 }, onClick: () => doAix('install'), disabled }, aixBusy === 'install' ? '部署中…' : '部署到眼镜'),
+            h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('launch'), disabled }, '打开页面'),
+            h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('show'), disabled }, '查看定义'),
+            h('button', { style: { ...S.ghost(disabled), height: 30 }, onClick: () => doAix('check'), disabled }, '检查'),
+          ),
+          aixOut ? h('pre', { style: { ...S.pre, marginTop: 8, maxHeight: 200, minHeight: 40 } }, aixOut) : null,
+        ) : null,
         h('div', { style: S.section }, t('ctl.text')),
         h('div', { style: S.row },
           h('input', { style: S.input, placeholder: t('ctl.textPlaceholder'), value: text, onChange: (e) => setText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') doText() } }),
@@ -1004,11 +1092,13 @@ window.__ModuleLoader__.load({
       const keOn = Boolean(targetDevice && keepAwakeList.includes(targetDevice.serial))
 
       // 左侧设备列表：只选设备，不带串流按钮，窄一些。
+      const kindIcon = (k) => k === 'tv' ? 'tv' : k === 'glasses' ? 'glasses' : 'phone'
       const leftRows = devices.length ? devices.map((d) => {
         const id = d.key || d.serial
         const on = d.state === 'device'
         const chosen = targetDevice && (targetDevice.key || targetDevice.serial) === id
         const nm = d.name || d.model || d.key || 'Android'
+        const kd = d.kind || (/tv|电视|盒子|box|mitv/i.test((d.model || '') + ' ' + (d.name || '')) ? 'tv' : 'phone')
         return h('button', {
           key: 'lv' + id,
           style: {
@@ -1019,7 +1109,10 @@ window.__ModuleLoader__.load({
           title: d.serial,
           onClick: () => setTargetKey(id),
         },
-          h('span', { style: S.dot(on) }),
+          h('span', { style: { position: 'relative', display: 'inline-flex', flex: '0 0 auto' } },
+            h('span', { style: { color: chosen ? C.primary : C.text2 } }, h(Ic, { name: kindIcon(kd), size: 15 })),
+            h('span', { style: { position: 'absolute', right: -2, bottom: -2, width: 6, height: 6, borderRadius: 3, background: on ? C.ok : C.text3, border: `1px solid ${C.bg}` } }),
+          ),
           h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden' } },
             h('div', { style: { fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, nm),
             h('div', { style: { fontSize: 9.5, color: on ? C.ok : C.text3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, on ? '在线' : '离线'),
@@ -1033,9 +1126,9 @@ window.__ModuleLoader__.load({
         h('button', { style: { ...S.ghost(disabled), width: '100%', marginTop: 6, height: 26, fontSize: 11, padding: 0 }, onClick: () => setDrawer('connect') }, '+ 连接'),
       )
 
-      const aspect = liveAspect > 0 ? liveAspect : (isTv ? 16 / 9 : 9 / 16)      // 画面固定小尺寸：保证下方控制板一屏能看全，不用滚动。
-      const liveMaxW = isTv ? 320 : 132
-      const liveMaxH = isTv ? 180 : 220
+      const aspect = liveAspect > 0 ? liveAspect : (isGlasses ? 1 : isTv ? 16 / 9 : 9 / 16)      // 画面固定小尺寸：保证下方控制板一屏能看全，不用滚动。
+      const liveMaxW = isGlasses ? 220 : isTv ? 320 : 132
+      const liveMaxH = isGlasses ? 220 : isTv ? 180 : 220
       const livePane = !curOnline
         ? h('div', { style: { height: 64, width: '100%', maxWidth: 200, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px dashed ${C.border3}`, borderRadius: C.radius, background: C.layer, color: C.text3, fontSize: 11.5, margin: '0 auto' } },
             targetDevice ? '设备离线' : '请先选择设备')
@@ -1052,7 +1145,7 @@ window.__ModuleLoader__.load({
                   key: 'live-' + targetId + '-' + liveNonce,
                   src: `${API}/live?device=${encodeURIComponent(targetId || '')}&q=9&n=${liveNonce}`,
                   alt: '实时画面',
-                  onLoad: (e) => { const n = e.currentTarget; if (n.naturalWidth >= 100 && n.naturalHeight >= 100) { const a = n.naturalWidth / n.naturalHeight; if (Math.abs(a - aspect) > 0.02) setLiveAspect(a) } },
+                  onLoad: (e) => { if (isGlasses) return; const n = e.currentTarget; if (n.naturalWidth >= 100 && n.naturalHeight >= 100) { const a = n.naturalWidth / n.naturalHeight; if (Math.abs(a - aspect) > 0.02) setLiveAspect(a) } },
                   onError: () => { setTimeout(() => setLiveNonce((x) => x + 1), 2500) },
                   style: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' },
                 })
@@ -1098,26 +1191,28 @@ window.__ModuleLoader__.load({
         const streaming = streamKeys.includes(id)
         const chosen = targetDevice && (targetDevice.key || targetDevice.serial) === id
         const nm = d.name || d.model || d.key || 'Android'
-        const tv = /tv|电视|盒子|box|mitv/i.test((d.model || '') + ' ' + (d.name || ''))
+        const dk = d.kind || (/glasses|rg[_-]?glasses|rokid|yodaos/i.test((d.model || '') + ' ' + (d.name || '')) ? 'glasses' : /tv|电视|盒子|box|mitv/i.test((d.model || '') + ' ' + (d.name || '')) ? 'tv' : 'phone')
+        const tv = dk === 'tv'
         return h('div', {
           key: 'st' + id,
           style: { display: 'flex', flexDirection: 'column', borderRadius: 10, cursor: 'pointer', overflow: 'hidden', border: `1.5px solid ${chosen ? C.primary : C.border}`, background: C.bg },
           onClick: () => { setTargetKey(id); setDrawer(null) },
         },
-          h('div', { style: { position: 'relative', width: '100%', aspectRatio: tv ? '16 / 9' : '9 / 16', background: '#0d0f12', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+          h('div', { style: { position: 'relative', width: '100%', aspectRatio: dk === 'glasses' ? '1 / 1' : tv ? '16 / 9' : '9 / 16', background: '#0d0f12', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
             streaming && on
-              ? h('img', { key: 's-' + id, src: `${API}/live?device=${encodeURIComponent(id)}&q=9`, alt: nm, style: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill' } })
+              ? h('img', { key: 's-' + id, src: `${API}/live?device=${encodeURIComponent(id)}&q=9`, alt: nm, style: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: dk === 'glasses' ? 'contain' : 'fill' } })
               : h('button', {
                   style: { background: 'transparent', border: 'none', color: '#5b6472', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, cursor: on ? 'pointer' : 'default' },
                   onClick: (e) => { e.stopPropagation(); if (on) toggleStream(id) },
                   disabled: !on,
                   title: on ? '串流这台设备' : '设备离线',
                 },
-                  h(Ic, { name: on ? 'wifi' : 'unlink', size: 26 }),
+                  h(Ic, { name: on ? kindIcon(dk) : 'unlink', size: 26 }),
                   h('span', { style: { fontSize: 10, color: on ? C.text3 : '#5b6472' } }, on ? '点此串流' : '离线'),
                 ),
           ),
           h('div', { style: { padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 6 } },
+            h('span', { style: { color: C.text2, display: 'inline-flex', flex: '0 0 auto' } }, h(Ic, { name: kindIcon(dk), size: 13 })),
             h('span', { style: S.dot(on) }),
             h('div', { style: { flex: '1 1 auto', minWidth: 0 } },
               h('div', { style: { fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, nm),
