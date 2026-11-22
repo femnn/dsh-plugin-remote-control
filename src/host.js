@@ -1306,7 +1306,9 @@ export function apply(ctx, config) {
     const rawName = req.headers['x-filename']
     const filename = rawName ? decodeURIComponent(String(rawName)) : `upload-${Date.now()}.bin`
     const destDir = req.headers['x-dest'] ? String(req.headers['x-dest']) : cfg.downloadDir
-    const install = String(req.headers['x-install'] || '') === '1' || /\.apk$/i.test(filename)
+    // 是否安装由客户端显式通过 x-install 决定，绝不靠文件后缀猜测：
+    // 「发送文件」传 x-install=0 时，即使是 .apk 也只 push 到手机存储、不安装。
+    const install = String(req.headers['x-install'] || '') === '1'
     const tmp = await mkdtemp(join(tmpdir(), 'dsh-phone-'))
     try {
       const { file, size } = await pipeBodyToFile(req, tmp, filename.replace(/[/\\]/g, '_'))
