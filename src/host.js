@@ -1029,6 +1029,24 @@ export function apply(ctx, config) {
     const r = await runAix(['device', '--serial', serial], 30000)
     return { ok: r.ok, serial, output: `${r.stdout || ''}${r.stderr || ''}`.trim() }
   }
+  /** 弹出 macOS 原生选择框，让用户在电脑上直接浏览选文件/目录，返回绝对路径。 */
+  function pickPath(kind) {
+    return new Promise((resolve) => {
+      const isFile = kind === 'file'
+      const prompt = isFile ? '选择 AIUI 工程文件（.aix）' : '选择 AIUI 工程目录（含 app.json）'
+      const script = isFile
+        ? `POSIX path of (choose file with prompt "${prompt}")`
+        : `POSIX path of (choose folder with prompt "${prompt}")`
+      execFile('osascript', ['-e', script], { timeout: 180000 }, (err, stdout, stderr) => {
+        if (err) {
+          const msg = String(stderr || err.message || err)
+          const canceled = /cancel/i.test(msg) || /-128/.test(msg)
+          return resolve({ ok: false, canceled, error: canceled ? '已取消' : msg.trim() })
+        }
+        resolve({ ok: true, path: String(stdout || '').trim().replace(/\/+$/, '') })
+      })
+    })
+  }
 
   async function reconnect(device) {
     const serial = String(device || active || '').trim()
@@ -2653,6 +2671,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     if (path === '/adb-reset') return ok(res, await adbReset())
     if (path === '/aix-deploy') { const b = await readJson(req); return ok(res, await aixDeploy(b)) }
     if (path === '/aix-device') { const b = await readJson(req); return ok(res, await aixDevice(b)) }
+    if (path === '/pick') { const b = await readJson(req); return ok(res, await pickPath(b.kind)) }
     if (path === '/command') { const b = await readJson(req); return ok(res, await runCommand(b.device, b.text)) }
     if (path === '/watcher') return ok(res, { notes: watchNotes(), reconnects: watcher.reconnects })
     if (path === '/companion') { const b = await readJson(req); return ok(res, await companionProbe(b.ip)) }
