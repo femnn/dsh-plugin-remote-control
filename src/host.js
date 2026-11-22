@@ -1321,6 +1321,8 @@ export function apply(ctx, config) {
       const remote = `${destDir.replace(/\/$/, '')}/${filename}`
       const r = await adb(withTarget(['push', file, remote], t), { timeout: 600000 })
       if (!r.ok) throw Object.assign(new Error(String(r.stderr || '推送失败')), { status: 500 })
+      // 通知媒体库扫描，让文件管理 / 相册立刻能看到新文件（否则可能要等系统自己扫）。
+      await adb(withTarget(['shell', `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://${remote} >/dev/null 2>&1`], t), { timeout: 8000 }).catch(() => {})
       return { pushed: true, remote, bytes: size, device: t }
     } finally { await rm(tmp, { recursive: true, force: true }).catch(() => {}) }
   }

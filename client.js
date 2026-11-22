@@ -599,7 +599,7 @@ window.__ModuleLoader__.load({
         xhr.setRequestHeader('x-dest', dest)
         xhr.setRequestHeader('x-install', '0')
         if (targetId) xhr.setRequestHeader('x-device', targetId)
-        xhr.upload.onprogress = (e) => { if (e.lengthComputable) { const pct = Math.round((e.loaded / e.total) * 100); setBusy(`${t('busy.uploading')} ${pct}%`) } }
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) { const pct = Math.round((e.loaded / e.total) * 100); setBusy(`${t('busy.uploading')} ${pct}%`); setInstallProgress({ pct, phase: 'uploading', message: `正在发送 ${pct}%（${(e.loaded / 1048576).toFixed(1)}/${(e.total / 1048576).toFixed(1)} MB）` }) } }
         xhr.onload = () => { try { const d = JSON.parse(xhr.responseText); if (!xhr.status || xhr.status >= 400 || !d.ok) reject(new Error(d.error || 'HTTP ' + xhr.status)); else resolve(d.value) } catch { reject(new Error('响应解析失败')) } }
         xhr.onerror = () => reject(new Error('网络错误'))
         xhr.send(file)
@@ -607,9 +607,11 @@ window.__ModuleLoader__.load({
       const sendFiles = async (list, install) => {
         if (!list || !list.length) return
         setMsg(null)
-        if (install) setInstallProgress({ pct: 0, phase: 'uploading', message: '准备上传…' })
+        // 发送和安装都显示进度条，避免「点了没反应」的错觉。
+        setInstallProgress({ pct: 0, phase: 'uploading', message: install ? '准备安装…' : '准备发送…' })
         try { const results = []; for (const f of list) results.push(await uploadOne(f, install)); const last = results[results.length - 1]
           note('ok', install ? `已安装：${last.filename}（${(last.bytes / 1048576).toFixed(1)} MB）` : `已发送 ${results.length} 个 → ${last.remote}`)
+          if (!install) { try { const v = await api('/list', { path: dest, device: targetId }); setListing(v.listing) } catch { /* ignore */ } }
         } catch (e) { note('err', e.message) } finally { setBusy(''); setInstallProgress(null); if (fileRef.current) fileRef.current.value = ''; if (apkRef.current) apkRef.current.value = '' }
       }
       const refreshDir = async () => { setBusy(t('busy.working')); try { const v = await api('/list', { path: dest, device: targetId }); setListing(v.listing) } catch (e) { note('err', e.message) } finally { setBusy('') } }
@@ -886,7 +888,7 @@ window.__ModuleLoader__.load({
         h('input', { ref: apkRef, type: 'file', accept: '.apk,application/vnd.android.package-archive', style: { display: 'none' }, onChange: (e) => sendFiles(Array.from(e.target.files || []), true) }),
         installProgress ? h('div', { style: { marginTop: 10, padding: 10, border: `1px solid ${C.border3}`, borderRadius: 8, background: C.layer } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: C.text2, marginBottom: 6 } },
-            h('span', null, installProgress.message || '正在安装…'),
+            h('span', null, installProgress.message || '正在处理…'),
             h('span', { style: { fontVariantNumeric: 'tabular-nums' } }, `${installProgress.pct || 0}%`),
           ),
           h('div', { style: { height: 6, borderRadius: 3, background: C.border, overflow: 'hidden' } },
