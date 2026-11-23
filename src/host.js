@@ -1446,7 +1446,7 @@ export function apply(ctx, config) {
     const job = {
       id: jobId, filename, device: t, phase: 'uploading', progress: 0,
       message: '正在上传到电脑临时目录…', done: false, ok: false, error: '',
-      startedAt: Date.now(), bytes: 0, pushed: 0, mbps: 0,
+      startedAt: Date.now(), bytes: 0,
     }
     installJobs.set(jobId, job)
     let tmp = ''
@@ -1455,47 +1455,15 @@ export function apply(ctx, config) {
       // 1) 浏览器 → 电脑临时目录（本地，很快）
       const { file, size } = await pipeBodyToFile(req, tmp, filename.replace(/[/\\]/g, '_'))
       job.bytes = size
-      job.phase = 'uploading'
-      job.progress = 100
-      job.message = '已接收文件，准备传到手机…'
-      // 2) 传到手机 + 安装（后台跑，前端轮询 /install-status）
+      job.phase = 'installing'
+      job.progress = 8
+      job.message = `已上传 ${(size / 1048576).toFixed(1)} MB，正在安装…`
+      // 2) 直接 adb install（原生路径，往返最少，慢速网络下反而最快）。
+      //    期间暂停该设备的实时画面，把无线带宽让给传包。
       ;(async () => {
-        heavyBusy.add(t) // 暂停该设备实时画面，让出无线带宽
-        const remote = `/data/local/tmp/dsh-install-${jobId}.apk`
+        heavyBusy.add(t)
         try {
-          job.phase = 'pushing'
-          job.message = '正在传输到手机…'
-          // 真实进度：adb push 后台跑，同时轮询设备端文件大小算百分比/速度
-          let pushDone = false
-          const pushP = adb(withTarget(['push', file, remote], t), { timeout: 3600000 })
-            .then((r) => { pushDone = true; return r })
-            .catch((e) => { pushDone = true; return { ok: false, stderr: String(e && e.message || e) } })
-          const t0 = Date.now()
-          while (!pushDone) {
-            await sleep(1200)
-            if (pushDone) break
-            const st = await adb(withTarget(['shell', `stat -c %s ${remote} 2>/dev/null || echo 0`], t), { timeout: 8000 }).catch(() => null)
-            const got = Number((st && st.stdout || '0').trim()) || 0
-            job.pushed = got
-            const secs = (Date.now() - t0) / 1000
-            job.mbps = secs > 0 ? (got / 1048576 / secs) : 0
-            const pct = size ? Math.min(99, Math.round((got / size) * 100)) : 0
-            job.progress = pct
-            job.message = `正在传输到手机… ${(got / 1048576).toFixed(1)}/${(size / 1048576).toFixed(1)} MB（${job.mbps.toFixed(2)} MB/s）`
-          }
-          const pr = await pushP
-          if (!pr || !pr.ok) {
-            // push 失败时，有些设备允许先尝试 adb install 兜底
-            job.ok = false
-            job.error = String(pr && pr.stderr || '传输失败')
-            job.message = '传输到手机失败：' + job.error
-            return
-          }
-          // 3) 安装
-          job.phase = 'installing'
-          job.progress = 99
-          job.message = '文件已传到手机，正在安装…'
-          const r = await adb(withTarget(['shell', 'pm', 'install', '-r', remote], t), { timeout: 1800000 })
+          const r = await adb(withTarget(['install', '-r', file], t), { timeout: 3600000 })
           const text = `${r.stdout || ''}${r.stderr || ''}`.trim()
           if (!r.ok || !/Success/i.test(text)) {
             job.ok = false
@@ -1506,11 +1474,10 @@ export function apply(ctx, config) {
             job.progress = 100
             job.message = '安装完成'
           }
-          adb(withTarget(['shell', `rm -f ${remote}`], t), { timeout: 8000 }).catch(() => {})
         } catch (e) {
           job.ok = false
           job.error = String(e.message || e)
-          job.message = '安装失败'
+          job.message = '安装失败：' + job.error
         } finally {
           heavyBusy.delete(t)
           job.done = true
@@ -1536,9 +1503,10 @@ export function apply(ctx, config) {
     // 安装阶段没有真实百分比，用已用时间估算一个平滑的进度。
     if (job.phase === 'installing' && !job.done) {
       const elapsed = Date.now() - job.startedAt
-      const estimate = Math.min(92, 5 + Math.round((elapsed / 60000) * 87))
-      job.progress = Math.max(job.progress, estimate)
-      job.message = `正在安装…（已用 ${Math.round(elapsed / 1000)} 秒）`
+      const secs = Math.round(elapsed / 1000)
+      // 不再显示假的固定百分比（会卡在 92% 看着像死了）；改为让秒数持续跳动，证明在跑。
+      job.progress = 8
+      job.message = `正在安装… 已用 ${secs} 秒（APK ${(job.bytes / 1048576).toFixed(0)} MB，慢速无线网络下大包可能要几分钟）`
     }
     // 清理一小时前的旧任务
     const cutoff = Date.now() - 3600000
