@@ -1067,10 +1067,14 @@ window.__ModuleLoader__.load({
         installProgress ? h('div', { style: { marginTop: 10, padding: 10, border: `1px solid ${C.border3}`, borderRadius: 8, background: C.layer } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: C.text2, marginBottom: 6 } },
             h('span', null, installProgress.message || '正在处理…'),
-            h('span', { style: { fontVariantNumeric: 'tabular-nums' } }, `${installProgress.pct || 0}%`),
+            installProgress.phase === 'installing'
+              ? h('span', { style: { color: C.primary } }, '⏳ 进行中')
+              : h('span', { style: { fontVariantNumeric: 'tabular-nums' } }, `${installProgress.pct || 0}%`),
           ),
-          h('div', { style: { height: 6, borderRadius: 3, background: C.border, overflow: 'hidden' } },
-            h('div', { style: { height: '100%', width: `${installProgress.pct || 0}%`, background: C.primary, transition: 'width 0.25s ease' } }),
+          h('div', { style: { height: 6, borderRadius: 3, background: C.border, overflow: 'hidden', position: 'relative' } },
+            installProgress.phase === 'installing'
+              ? h('div', { style: { height: '100%', width: '38%', borderRadius: 3, background: `linear-gradient(90deg, transparent, ${C.primary}, transparent)`, animation: 'dshIndet 1.1s ease-in-out infinite' } })
+              : h('div', { style: { height: '100%', width: `${installProgress.pct || 0}%`, background: C.primary, transition: 'width 0.25s ease' } }),
           ),
         ) : null,
         aixBlock,
@@ -1394,7 +1398,7 @@ window.__ModuleLoader__.load({
         h('div', { style: { marginTop: 8, color: '#aaa', fontSize: 11 } }, '点空白处或「关闭」退出放大'),
       ) : null
 
-      return h('div', { style: S.root, 'data-phone-remote': '' }, header, toast, body, bigModal,
+      return h('div', { style: S.root, 'data-phone-remote': '' }, h('style', { key: 'dsh-kf' }, '@keyframes dshIndet{0%{margin-left:-38%}100%{margin-left:100%}}'), header, toast, body, bigModal,
         drawerPanel('devices', '所有设备', devicesPanel),
         drawerPanel('connect', '连接新设备', addSection))
     }
