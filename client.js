@@ -293,6 +293,8 @@ window.__ModuleLoader__.load({
       const [browseBusy, setBrowseBusy] = useState(false)
       const [browseErr, setBrowseErr] = useState('')
       const [showBrowser, setShowBrowser] = useState(false)
+      const [cleanupBusy, setCleanupBusy] = useState(false)
+      const [cleanupInfo, setCleanupInfo] = useState('')
       const [shot, setShot] = useState('')
       const [liveView, setLiveView] = useState(true)
       const [bigView, setBigView] = useState(false)
@@ -680,6 +682,15 @@ window.__ModuleLoader__.load({
           note(v.ok ? 'ok' : 'err', v.ok ? 'AIUI 操作完成' : 'AIUI 操作失败')
         } catch (e) { setAixOut('❌ ' + e.message); note('err', e.message) } finally { setAixBusy('') }
       }
+      const doCleanup = async () => {
+        setCleanupBusy(true); setCleanupInfo('')
+        try {
+          const v = await api('/cleanup', {})
+          setCleanupInfo(`已清理：名册垃圾 ${v.removed} 条、断开僵尸连接 ${v.disconnected} 个、清理设备端采集 ${v.devicesCleaned} 台、结束残留进程 ${v.processesKilled} 个`)
+          note('ok', '后台清理完成')
+          loadDevices()
+        } catch (e) { note('err', e.message); setCleanupInfo('清理失败：' + e.message) } finally { setCleanupBusy(false) }
+      }
       const doAixInfo = async () => {
         if (!targetId) return
         setAixBusy('device'); setAixOut('读取眼镜 AIUI 状态…')
@@ -698,8 +709,10 @@ window.__ModuleLoader__.load({
         try { const v = await api('/bridge', { from: targetId, to: toId }); note('ok', v.note || '已转串流'); setCastInfo(v.url || '') }
         catch (e) { note('err', e.message) } finally { setBusy('') }
       }
+      const suppressClickRef = useRef(false)
       const doTapFrac = async (e) => {
         if (!targetDevice || targetDevice.state !== 'device') return
+        if (suppressClickRef.current) { suppressClickRef.current = false; return }
         const rect = e.currentTarget.getBoundingClientRect()
         const fx = (e.clientX - rect.left) / rect.width
         const fy = (e.clientY - rect.top) / rect.height
@@ -707,6 +720,50 @@ window.__ModuleLoader__.load({
         setTapPing({ x: e.clientX - rect.left, y: e.clientY - rect.top, t: Date.now() })
         try { await api('/tapfrac', { device: targetId, fx, fy }) } catch (err) { note('err', err.message) }
         setTimeout(() => setTapPing(null), 500)
+      }
+      // 在串流画面上按住左右/上下拖动 → 真实滑动（像 Pinky 一样直接划）。
+      // 拖动过程实时显示轨迹，松手时一次性把整段手势发到设备（一次 adb 调用，插值动画跟手）。
+      const dragRef = useRef(null)
+      const onDragStart = (e) => {
+        if (!targetDevice || targetDevice.state !== 'device') return
+        const rect = e.currentTarget.getBoundingClientRect()
+        dragRef.current = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, rect, moved: false, t0: Date.now(), pointerId: e.pointerId }
+        try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+      }
+      const onDragMove = (e) => {
+        const d = dragRef.current
+        if (!d) return
+        const dx = e.clientX - d.x0, dy = e.clientY - d.y0
+        // 超过阈值才算「滑动」，否则当作点击。
+        if (!d.moved && Math.hypot(dx, dy) < 10) return
+        d.moved = true
+        d.x1 = e.clientX; d.y1 = e.clientY
+        setTapPing({ x: e.clientX - d.rect.left, y: e.clientY - d.rect.top, t: Date.now() })
+      }
+      const onDragEnd = async (e) => {
+        const d = dragRef.current
+        dragRef.current = null
+        if (!d) return
+        // 真实拖动时长（服务端会保证 >=250ms，太快会被设备当成点击）
+        const dur = Math.max(250, Math.min(600, Date.now() - d.t0))
+        if (!d.moved) {
+          suppressClickRef.current = false
+          // 没拖动 → 就是点击（走点击分支）
+          await doTapFrac(e)
+          setTimeout(() => setTapPing(null), 500)
+          return
+        }
+        // 拖过 → 紧接着的 click 要忽略（否则会多点一次）
+        suppressClickRef.current = true
+        const rect = d.rect
+        const fx1 = (d.x0 - rect.left) / rect.width
+        const fy1 = (d.y0 - rect.top) / rect.height
+        const fx2 = (d.x1 - rect.left) / rect.width
+        const fy2 = (d.y1 - rect.top) / rect.height
+        setTimeout(() => setTapPing(null), 350)
+        setTimeout(() => { suppressClickRef.current = false }, 800)
+        try { await api('/swipefrac', { device: targetId, fx1, fy1, fx2, fy2, ms: dur }) }
+        catch (err) { note('err', err.message) }
       }
 
       const disabled = Boolean(busy)
@@ -932,10 +989,6 @@ window.__ModuleLoader__.load({
 
       const keyBtn = (name, icon, label) => h('button', { key: name, style: S.keyBtn, onClick: () => doKey(name), disabled }, h(Ic, { name: icon, size: 18 }), h('span', null, label))
       const doSwipe = async (x1, y1, x2, y2) => { try { await api('/input', { kind: 'swipe', x1, y1, x2, y2, ms: 200, device: targetId }); note('ok', '已滑动') } catch (e) { note('err', e.message) } }
-      const arrowBtn = (label, dx, dy) => h('button', {
-        key: 'sw' + label, style: { ...S.keyBtn, fontSize: 16 },
-        onClick: () => { const cx = 240, cy = 320, r = 90; doSwipe(cx - dx * r, cy - dy * r, cx + dx * r, cy + dy * r) }, disabled,
-      }, label)
       // 多设备切换条：选哪台，下面所有操作就打给哪台。
       // 设备选择在左侧列表完成。发送文件时会显示一个「发到哪台」横幅，避免发错设备。
       const targetPicker = h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '7px 9px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.layer, marginBottom: 10, fontSize: 12 } },
@@ -1029,7 +1082,6 @@ window.__ModuleLoader__.load({
             h('div', { style: S.section }, '镜腿操作'),
             h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 } },
               keyBtn('enter', 'check', '单击'), keyBtn('back', 'back', '双击'),
-              keyBtn('dpadUp', 'up', '向前滑动'), keyBtn('dpadDown', 'down', '向后滑动'),
             ),
             h('div', { style: S.section }, '按键 / 音量'),
             h('div', { style: S.grid3 },
@@ -1201,8 +1253,13 @@ window.__ModuleLoader__.load({
               position: 'relative', width: '100%', maxWidth: liveMaxW, maxHeight: liveMaxH,
               aspectRatio: String(aspect), borderRadius: isTv ? 10 : 16, overflow: 'hidden',
               background: '#0d0f12', border: `1px solid ${C.border2}`, margin: '0 auto', cursor: 'crosshair',
+              touchAction: 'none', userSelect: 'none',
             },
             onClick: doTapFrac,
+            onPointerDown: onDragStart,
+            onPointerMove: onDragMove,
+            onPointerUp: onDragEnd,
+            onPointerCancel: () => { dragRef.current = null; setTapPing(null) },
           },
             liveView
               ? h('img', {
@@ -1292,6 +1349,9 @@ window.__ModuleLoader__.load({
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 12 } },
           devices.length ? streamRows : h('div', { style: { fontSize: 11.5, color: C.text3 } }, '还没有设备')),
         h('button', { style: { ...S.ghost(disabled), width: '100%', height: 34 }, onClick: () => setDrawer('connect') }, '+ 连接新设备'),
+        h('button', { style: { ...S.ghost(disabled), width: '100%', height: 32, marginTop: 8 }, onClick: doCleanup, disabled: cleanupBusy, title: '清理名册垃圾条目、断开僵尸连接、结束残留采集进程' },
+          h(Ic, { name: 'trash', size: 14 }), cleanupBusy ? '清理中…' : '🧹 后台清理'),
+        cleanupInfo ? h('div', { style: { marginTop: 6, fontSize: 11, color: C.text2, lineHeight: 1.6 } }, cleanupInfo) : null,
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, margin: '16px 0 8px' } },
           h('div', { style: { fontSize: 12, fontWeight: 600, color: C.text2 } }, '群聊'),
           h('div', { style: { flex: '1 1 auto', height: 1, background: C.border } })),
@@ -1308,8 +1368,12 @@ window.__ModuleLoader__.load({
           h('button', { style: { background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 12 }, onClick: (e) => { e.stopPropagation(); setBigView(false) } }, '关闭 ✕'),
         ),
         h('div', {
-          style: { position: 'relative', maxWidth: '96vw', maxHeight: '84vh', aspectRatio: String(aspect), background: '#000', borderRadius: 8, overflow: 'hidden', cursor: 'crosshair', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' },
+          style: { position: 'relative', maxWidth: '96vw', maxHeight: '84vh', aspectRatio: String(aspect), background: '#000', borderRadius: 8, overflow: 'hidden', cursor: 'crosshair', boxShadow: '0 8px 40px rgba(0,0,0,0.6)', touchAction: 'none', userSelect: 'none' },
           onClick: (e) => { e.stopPropagation(); doTapFrac(e) },
+          onPointerDown: (e) => { e.stopPropagation(); onDragStart(e) },
+          onPointerMove: (e) => { e.stopPropagation(); onDragMove(e) },
+          onPointerUp: (e) => { e.stopPropagation(); onDragEnd(e) },
+          onPointerCancel: () => { dragRef.current = null; setTapPing(null) },
         },
           h('img', {
             key: 'big-' + targetId + '-' + liveNonce,

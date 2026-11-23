@@ -360,6 +360,12 @@ export function apply(ctx, config) {
    *   - 历史遗留的机型名键（认不出主人）
    * 只保留「能对上真实设备」的部分，别让设备列表出现幽灵行。
    */
+  /** 判断某个 IP 是否属于 VPN/代理隧道网段（不是真实设备）。 */
+  function isTunnelIp(ip) {
+    const s = String(ip || '')
+    return /^198\.1[89]\./.test(s) || /^100\.(6[4-9]|7[01])\./.test(s) || /^169\.254\./.test(s)
+  }
+
   async function pruneRoster(liveKeys, liveIps) {
     const live = new Set(liveKeys)
     const ips = new Set(liveIps || [])
@@ -372,6 +378,8 @@ export function apply(ctx, config) {
     }
     for (const [key, entry] of Object.entries(roster)) {
       const isIpAlias = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(key)
+      // 0) VPN/代理隧道网段的条目（198.18.x 等）不是真实设备 → 直接清掉。
+      if (isTunnelIp(key) || isTunnelIp(entry.ip || '')) { delete roster[key]; changed = true; continue }
       const owner = entry.key || ''
       // 1) 过期 IP 别名：设备现在用的 IP 不是它 → 删掉。
       if (isIpAlias && owner && live.has(owner)) {
@@ -987,6 +995,55 @@ export function apply(ctx, config) {
     return { reset: true, devices: (await adbDevices()).map((d) => ({ ...d, active: false, name: names[d.serial] || '' })) }
   }
 
+  /**
+   * 后台清理：
+   *  - 清掉名册里的垃圾条目（VPN/代理隧道网段的假设备、历史别名、无主条目）
+   *  - 断开僵尸/offline 的 adb 连接，释放设备端占用的 screenrecord
+   *  - 结束本机残留的采集进程（screenrecord/ffmpeg），避免抢视频编码器导致画面卡
+   */
+  async function cleanup() {
+    const removed = []
+    // 1) 名册清理
+    const raw = await adbDevices()
+    const liveKeys = new Set(raw.filter((d) => d.state === 'device').map((d) => deviceKey(d.serial) || d.serial))
+    const liveIps = raw.filter((d) => d.state === 'device').map((d) => ipOfSerial(d.serial)).filter(Boolean)
+    for (const [key, entry] of Object.entries(roster)) {
+      const isIpAlias = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(key)
+      const owner = entry.key || ''
+      const junk =
+        isTunnelIp(key) || isTunnelIp(entry.ip || '') ||
+        (isIpAlias && owner && liveKeys.has(owner) && entry.ip !== key) ||
+        (!liveKeys.has(key) && !owner)
+      if (junk) { removed.push(key); delete roster[key] }
+    }
+    await saveRoster()
+    // 2) 断开僵尸连接
+    let disconnected = 0
+    for (const d of raw) {
+      if (d.state === 'device') continue
+      const r = await adb(['disconnect', d.serial], { timeout: 4000 }).catch(() => null)
+      if (r && r.ok) disconnected++
+    }
+    // 3) 清掉设备端残留的 screenrecord（会一直占着视频编码器）
+    let cleaned = 0
+    for (const d of raw.filter((x) => x.state === 'device')) {
+      const r = await adb(withTarget(['shell', 'pkill -9 screenrecord 2>/dev/null; pkill -9 -f "screenrecord --output-format" 2>/dev/null || true'], d.serial), { timeout: 6000 }).catch(() => null)
+      if (r && r.ok) cleaned++
+    }
+    // 4) 结束本机残留采集进程
+    let killed = 0
+    for (const c of [...ownedChildren]) {
+      try { process.kill(-c.pid, 'SIGKILL'); killed++ } catch { try { c.kill('SIGKILL'); killed++ } catch { /* ignore */ } }
+      ownedChildren.delete(c)
+    }
+    for (const hub of liveHubs.values()) {
+      hub.stop = true
+      try { if (hub.child) process.kill(-hub.child.pid, 'SIGKILL') } catch { /* ignore */ }
+    }
+    liveHubs.clear()
+    return { removed: removed.length, removedSample: removed.slice(0, 5), disconnected, devicesCleaned: cleaned, processesKilled: killed }
+  }
+
   // ---- AIUI / Rokid 工程部署（调用官方 aix CLI，把本地工程装到眼镜做真机测试）----
   function resolveAix() {
     const cands = [join(homedir(), '.npm-global/bin/aix'), '/usr/local/bin/aix', '/opt/homebrew/bin/aix']
@@ -1257,10 +1314,9 @@ export function apply(ctx, config) {
       if (raw.some((d) => d.serial === `${ip}:5555` && d.state === 'device')) continue
       if (await verify(`${ip}:5555`)) return
     }
-    // 2) 扫当前网段的 :5555（换 IP 时）
-    const myIp = localIp()
-    if (!/^\d+\.\d+\.\d+\.\d+$/.test(myIp)) return
-    const prefix = myIp.split('.').slice(0, 3).join('.')
+    // 2) 扫本机所有真实局域网网段的 :5555（换 IP 时）。排除 VPN/代理隧道网段。
+    const prefixes = lanPrefixes()
+    if (!prefixes.length) return
     const probe = (ip) => new Promise((resolve) => {
       const s = net.connect({ host: ip, port: 5555 })
       const done = (ok) => { try { s.destroy() } catch { /* ignore */ } resolve(ok ? ip : null) }
@@ -1269,7 +1325,8 @@ export function apply(ctx, config) {
       s.once('timeout', () => done(false))
       s.once('error', () => done(false))
     })
-    const ips = Array.from({ length: 254 }, (_, i) => `${prefix}.${i + 1}`)
+    const ips = []
+    for (const p of prefixes) for (let i = 1; i <= 254; i++) ips.push(`${p}.${i}`)
     const hits = (await Promise.all(ips.map(probe))).filter(Boolean)
     for (const ip of hits) {
       const addr = `${ip}:5555`
@@ -1886,15 +1943,34 @@ export function apply(ctx, config) {
   async function tapFrac(device, fx, fy) {
     const t = await resolveTarget(device)
     if (!t) throw Object.assign(new Error('还没有连接设备'), { status: 409 })
-    let w = 0, h = 0
-    const r = await adb(withTarget(['shell', 'wm', 'size'], t), { timeout: 8000 })
-    const m = /(\d{2,5})x(\d{2,5})/.exec(r.stdout || '')
-    if (m) { w = Number(m[1]); h = Number(m[2]) }
+    const { w, h } = await deviceSize(t)
     if (!w || !h) throw Object.assign(new Error('读不到设备分辨率'), { status: 500 })
     const x = Math.max(0, Math.min(w - 1, Math.round(Number(fx) * w)))
     const y = Math.max(0, Math.min(h - 1, Math.round(Number(fy) * h)))
     await adb(withTarget(['shell', 'input', 'tap', String(x), String(y)], t), { timeout: 8000 })
     return { device: t, x, y }
+  }
+
+  /**
+   * 分数滑动：在设备上从 (fx1,fy1) 滑到 (fx2,fy2)。
+   * 一次 adb 调用完成整段手势（Android 的 input swipe 自带插值动画），
+   * 比拆成多次 motionevent 往返快得多，手感更跟手。
+   */
+  async function swipeFrac(device, fx1, fy1, fx2, fy2, ms) {
+    const t = await resolveTarget(device)
+    if (!t) throw Object.assign(new Error('还没有连接设备'), { status: 409 })
+    const { w, h } = await deviceSize(t)
+    if (!w || !h) throw Object.assign(new Error('读不到设备分辨率'), { status: 500 })
+    const px = (fx) => Math.max(0, Math.min(w - 1, Math.round(Number(fx) * w)))
+    const py = (fy) => Math.max(0, Math.min(h - 1, Math.round(Number(fy) * h)))
+    const x1 = px(fx1), y1 = py(fy1), x2 = px(fx2), y2 = py(fy2)
+    // 动画时长：Android 的 input swipe 太快（<250ms）会被当成「点击」而不是滑动，
+    // 实测 120ms 无效、300ms 才生效。所以下限取 250ms，上限 800ms。
+    // 传入的 ms 只用来表达「用户拖得多快」，这里以它为基准但保证下限。
+    const want = Number(ms) || 300
+    const dur = Math.max(250, Math.min(800, Math.round(want)))
+    await adb(withTarget(['shell', 'input', 'swipe', String(x1), String(y1), String(x2), String(y2), String(dur)], t), { timeout: 10000 })
+    return { device: t, x1, y1, x2, y2, ms: dur }
   }
 
   /** 读取本机 DSH 当前接入的模型（Magpie 网关，OpenAI 兼容），给「AI 操控」用。 */
@@ -2003,11 +2079,18 @@ export function apply(ctx, config) {
     })
   }
   /** 取设备屏幕像素尺寸。 */
+  const sizeCache = new Map()   // serial -> {w,h,at}，分辨率很少变，缓存 5 分钟省一次 adb 往返
   async function deviceSize(serial) {
+    const c = sizeCache.get(serial)
+    if (c && Date.now() - c.at < 300000) return { w: c.w, h: c.h }
     try {
       const wm = await adb(withTarget(['shell', 'wm', 'size'], serial), { timeout: 6000 })
       const m = /(\d+)x(\d+)/.exec(wm.stdout || '')
-      if (m) return { w: Number(m[1]), h: Number(m[2]) }
+      if (m) {
+        const v = { w: Number(m[1]), h: Number(m[2]), at: Date.now() }
+        sizeCache.set(serial, v)
+        return { w: v.w, h: v.h }
+      }
     } catch { /* ignore */ }
     return { w: 1080, h: 1920 }
   }
@@ -2194,16 +2277,57 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
         : `设备没有自动选择播放器，请手动用它的浏览器打开：${pageUrl}`,
     }
   }
+  /** 本机在真实局域网里的 IPv4。必须排除 VPN/代理隧道网段（如 198.18.0.0/15、10.x TUN），
+   *  否则扫设备时会把隧道里的虚拟 IP 全当成设备，列表里冒出几百个「离线设备」。 */
   function localIp() {
+    const bad = /^(198\.18\.|198\.19\.|100\.64\.|169\.254\.|0\.)/
+    const isTunnel = (name) => /^(utun|tun|tap|wg|ppp|gif|stf|bridge)/i.test(String(name || ''))
     try {
       const nets = networkInterfaces()
-      for (const list of Object.values(nets)) {
+      // 先找非隧道接口的局域网地址（192.168.* / 10.* / 172.16-31.*）
+      const picks = []
+      for (const [name, list] of Object.entries(nets)) {
         for (const n of list || []) {
-          if (n && n.family === 'IPv4' && !n.internal) return n.address
+          if (!n || n.family !== 'IPv4' || n.internal) continue
+          if (bad.test(n.address)) continue
+          if (isTunnel(name)) continue
+          picks.push({ name, address: n.address })
+        }
+      }
+      const priv = picks.find((p) => /^192\.168\./.test(p.address))
+      if (priv) return priv.address
+      const ten = picks.find((p) => /^10\./.test(p.address))
+      if (ten) return ten.address
+      const p172 = picks.find((p) => /^172\.(1[6-9]|2\d|3[01])\./.test(p.address))
+      if (p172) return p172.address
+      if (picks.length) return picks[0].address
+    } catch { /* ignore */ }
+    return '127.0.0.1'
+  }
+  /** 本机所有真实局域网网段前缀（不含隧道网段）。 */
+  function lanPrefixes() {
+    const bad = /^(198\.18\.|198\.19\.|100\.64\.|169\.254\.)/
+    const isTunnel = (name) => /^(utun|tun|tap|wg|ppp|gif|stf|bridge)/i.test(String(name || ''))
+    const out = new Set()
+    try {
+      const nets = networkInterfaces()
+      for (const [name, list] of Object.entries(nets)) {
+        if (isTunnel(name)) continue
+        for (const n of list || []) {
+          if (!n || n.family !== 'IPv4' || n.internal) continue
+          if (bad.test(n.address)) continue
+          if (/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(n.address)) {
+            out.add(n.address.split('.').slice(0, 3).join('.'))
+          }
         }
       }
     } catch { /* ignore */ }
-    return '127.0.0.1'
+    if (!out.size) {
+      const ip = localIp()
+      const m = /^(\d+\.\d+\.\d+)\./.exec(ip || '')
+      if (m) out.add(m[1])
+    }
+    return [...out]
   }
 
   /**
@@ -2546,7 +2670,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     // 设备端 screenrecord 同时只能有一个，多开会抢视频编码器 → 画面卡/黑屏/设备卡死。
     let hub = liveHubs.get(serial)
     if (!hub) {
-      hub = { res: new Set(), stop: false, child: null, lastFrame: null, lastFrameAt: 0, started: false }
+      hub = { res: new Set(), stop: false, child: null, lastFrame: null, lastFrameAt: 0, started: false, shotMode: false }
       liveHubs.set(serial, hub)
       startLiveHub(serial, hub, { bin, ffmpeg, size, tw, th, quality })
     }
@@ -2604,6 +2728,54 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
         } catch { /* 断开时忽略 */ }
       }
     }
+    /**
+     * 常驻截图流：一条 adb 连接里让设备循环 screencap，PNG 字节流源源不断吐出来，
+     * 电脑端边读边转 MJPEG 推给观看者。
+     * 优点：没有每帧一次 adb 往返（省 0.23s），也没有 scrcpy 启动开销（省 2-3s）。
+     * 眼镜这类不支持 screenrecord 的设备全靠它。
+     */
+    const runShotStream = () => new Promise((resolve) => {
+      if (hub.stop) { resolve(0); return }
+      const loop = 'i=0; while [ $i -lt 100000 ]; do screencap -p; i=$((i+1)); done'
+      let child
+      try { child = spawn(bin, ['-s', serial, 'exec-out', 'sh', '-c', loop], { stdio: ['ignore', 'pipe', 'ignore'], detached: true }) } catch { resolve(0); return }
+      ownedChildren.add(child)
+      hub.child = child
+      const chunks = []
+      let pending = Buffer.alloc(0)
+      const onData = (d) => {
+        chunks.push(d)
+        pending = Buffer.concat([pending, d])
+        // 从缓冲区里切出完整的 PNG（以 IEND 结尾）
+        let guard = 0
+        while (guard++ < 50) {
+          const start = pending.indexOf(0x89)
+          if (start < 0) { pending = Buffer.alloc(0); return }
+          const end = pending.indexOf('IEND', start)
+          if (end < 0) { if (start > 0) pending = pending.slice(start); return }
+          const png = pending.slice(start, end + 8)
+          pending = pending.slice(end + 8)
+          if (png.length > 200) {
+            // 转 MJPEG 后推给观看者（不等转完，转完再推，保证顺序）
+            let ff
+            try {
+              const args = ['-hide_banner', '-loglevel', 'error', '-f', 'image2pipe', '-i', 'pipe:0']
+              if (tw && th) args.push('-vf', `scale=${tw}:${th}`)
+              args.push('-q:v', quality, '-f', 'image2pipe', '-c:v', 'mjpeg', '-')
+              ff = spawn(ffmpeg, args, { stdio: ['pipe', 'pipe', 'ignore'], detached: true })
+            } catch { continue }
+            const out = []
+            ff.stdout.on('data', (b) => out.push(b))
+            ff.on('error', () => {})
+            ff.on('close', () => { const j = Buffer.concat(out); if (j.length) push(j) })
+            try { ff.stdin.on('error', () => {}); ff.stdin.write(png); ff.stdin.end() } catch { /* ignore */ }
+          }
+        }
+      }
+      child.stdout.on('data', onData)
+      child.on('error', () => { try { child.kill('SIGKILL') } catch { /* ignore */ } resolve(0) })
+      child.on('close', () => { if (hub.child === child) hub.child = null; resolve(1) })
+    })
     const runScreenrecord = () => new Promise((resolve) => {
       if (hub.stop) { resolve(0); return }
       const cmd = `"${bin}" -s "${serial}" exec-out screenrecord --output-format=h264 --time-limit 12 --size ${size} - | ` +
@@ -2627,36 +2799,29 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     // 兜底：设备息屏/静止时 screenrecord 可能不出帧，用一张 screencap 截图顶上。
     const grabShot = () => new Promise((resolve) => {
       if (hub.stop) { resolve(null); return }
-      // 快照：设备端先存文件再传回（比 exec-out 直连快约 3 倍），再做缩放转 MJPEG。
-      const f = '/sdcard/_dsh_live.png'
-      let cap1
-      try { cap1 = spawn(bin, ['-s', serial, 'shell', `screencap -p ${f}`], { stdio: 'ignore', detached: true }) } catch { resolve(null); return }
-      ownedChildren.add(cap1); cap1.on('close', () => ownedChildren.delete(cap1))
-      cap1.on('error', () => resolve(null))
-      cap1.on('close', () => {
-        if (hub.stop) { resolve(null); return }
-        let cap
-        try { cap = spawn(bin, ['-s', serial, 'exec-out', 'cat', f], { stdio: ['ignore', 'pipe', 'ignore'], detached: true }) } catch { resolve(null); return }
-        ownedChildren.add(cap); cap.on('close', () => ownedChildren.delete(cap))
-        const chunks = []
-        cap.stdout.on('data', (d) => chunks.push(d))
-        cap.on('error', () => resolve(null))
-        cap.on('close', () => {
-          const png = Buffer.concat(chunks)
-          if (hub.stop || png.length < 100 || png[1] !== 0x50) { resolve(null); return }
-          let ff
-          try {
-            const args = ['-hide_banner', '-loglevel', 'error', '-f', 'image2pipe', '-i', 'pipe:0']
-            if (tw && th) args.push('-vf', `scale=${tw}:${th}`)
-            args.push('-q:v', quality, '-f', 'image2pipe', '-c:v', 'mjpeg', '-')
-            ff = spawn(ffmpeg, args, { stdio: ['pipe', 'pipe', 'ignore'], detached: true })
-          } catch { resolve(null); return }
-          const out = []
-          ff.stdout.on('data', (d) => out.push(d))
-          ff.on('error', () => resolve(null))
-          ff.on('close', () => resolve(out.length ? Buffer.concat(out) : null))
-          try { ff.stdin.on('error', () => {}); ff.stdin.write(png); ff.stdin.end() } catch { resolve(null) }
-        })
+      // 快照：直接 exec-out screencap 取回 PNG，再缩放转 MJPEG。
+      // 实测眼镜上 exec-out 直出约 0.7s，而「落盘再 cat」要 1.7s —— 直出更快也更省一次 adb 往返。
+      let cap
+      try { cap = spawn(bin, ['-s', serial, 'exec-out', 'screencap', '-p'], { stdio: ['ignore', 'pipe', 'ignore'], detached: true }) } catch { resolve(null); return }
+      ownedChildren.add(cap); cap.on('close', () => ownedChildren.delete(cap))
+      const chunks = []
+      cap.stdout.on('data', (d) => chunks.push(d))
+      cap.on('error', () => resolve(null))
+      cap.on('close', () => {
+        const png = Buffer.concat(chunks)
+        if (hub.stop || png.length < 100 || png[1] !== 0x50) { resolve(null); return }
+        let ff
+        try {
+          const args = ['-hide_banner', '-loglevel', 'error', '-f', 'image2pipe', '-i', 'pipe:0']
+          if (tw && th) args.push('-vf', `scale=${tw}:${th}`)
+          args.push('-q:v', quality, '-f', 'image2pipe', '-c:v', 'mjpeg', '-')
+          ff = spawn(ffmpeg, args, { stdio: ['pipe', 'pipe', 'ignore'], detached: true })
+        } catch { resolve(null); return }
+        const out = []
+        ff.stdout.on('data', (d) => out.push(d))
+        ff.on('error', () => resolve(null))
+        ff.on('close', () => resolve(out.length ? Buffer.concat(out) : null))
+        try { ff.stdin.on('error', () => {}); ff.stdin.write(png); ff.stdin.end() } catch { resolve(null) }
       })
     })
     ;(async () => {
@@ -2669,15 +2834,16 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
       let lastWake = Date.now()
       // screenrecord 只在画面「有变化」时出帧；画面静止时它会一直不出。
       // 所以另开一个定时截图，保证观看者任何时候都能看到当前画面。
-      // grabbing 标记防止截图/编码重叠（2 秒一张，重叠会又去抢编码器）。
+      // 眼镜这类不支持 screenrecord 的设备完全靠这条路径，实测 0.7s/张 → 约 1.4fps。
+      // grabbing 标记防止截图/编码重叠（重叠会又去抢编码器）。
       let grabbing = false
       const ticker = setInterval(() => {
         if (hub.stop || grabbing) return
-        // 最近 1 秒内已经有实时帧了，就不重复用截图刷。
-        if (Date.now() - hub.lastFrameAt < 600) return
+        // 最近 0.4 秒内已经有实时帧了，就不重复用截图刷。
+        if (Date.now() - hub.lastFrameAt < 400) return
         grabbing = true
         grabShot().then((shot) => { if (shot) push(shot) }).catch(() => {}).finally(() => { grabbing = false })
-      }, 500)
+      }, 250)
       if (typeof ticker.unref === 'function') ticker.unref()
       while (!hub.stop) {
         const online = await usable(serial).catch(() => false)
@@ -2685,15 +2851,31 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
         // 不再周期性发 KEYCODE_WAKEUP：那会反复触发人脸/指纹「智能解锁」。
         // 靠 keepAwake 里设的超长息屏时间防止自动灭屏就够了。
         const started = Date.now()
+        // 先试 screenrecord（硬件编码，流畅）；
+        // 眼镜这类不支持的设备会很快退出或不出帧，这时改用常驻截图流。
         await runScreenrecord()
         if (hub.stop) break
-        // 这一段不满 2 秒就结束 = 没出帧（多半画面静止），补一张截图保底（不唤醒）。
-        if (Date.now() - started < 2000) {
+        const elapsed = Date.now() - started
+        // 短时间内就结束 = 没跑出有效视频流（设备不支持 screenrecord / 画面静止）→ 走截图流。
+        if (elapsed < 6000) {
           if (!grabbing) {
             grabbing = true
             try { push(await grabShot()) } finally { grabbing = false }
           }
-          await sleep(600)
+          if (!hub.shotMode) {
+            // 确认 screenrecord 不可用 → 切到常驻截图流（更稳且能持续出帧）。
+            const probe = await adb(withTarget(['shell', 'screenrecord --help 2>&1 | head -1'], serial), { timeout: 8000 }).catch(() => null)
+            const supported = Boolean(probe && probe.ok && !/not found|unknown command|Exception/i.test(probe.stdout || ''))
+            if (!supported) {
+              hub.shotMode = true
+              watchNote(serial, '该设备不支持 screenrecord，已切换到常驻截图流')
+            }
+          }
+          if (hub.shotMode) {
+            await runShotStream()
+            continue
+          }
+          await sleep(250)
         } else {
           await sleep(200)
         }
@@ -2718,6 +2900,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     if (path === '/reconnect') { const b = await readJson(req); return ok(res, await reconnect(b.device)) }
     if (path === '/rename') { const b = await readJson(req); return ok(res, await rename(b.device, b.name)) }
     if (path === '/adb-reset') return ok(res, await adbReset())
+    if (path === '/cleanup') return ok(res, await cleanup())
     if (path === '/aix-deploy') { const b = await readJson(req); return ok(res, await aixDeploy(b)) }
     if (path === '/aix-device') { const b = await readJson(req); return ok(res, await aixDevice(b)) }
     if (path === '/pick') { const b = await readJson(req); return ok(res, await pickPath(b.kind)) }
@@ -2733,6 +2916,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     if (path === '/cast') { const b = await readJson(req); return ok(res, await startCast(b.device, b.mode)) }
     if (path === '/keepawake') { const b = await readJson(req); return ok(res, await keepAwake(b.device, b.on)) }
     if (path === '/tapfrac') { const b = await readJson(req); return ok(res, await tapFrac(b.device, b.fx, b.fy)) }
+    if (path === '/swipefrac') { const b = await readJson(req); return ok(res, await swipeFrac(b.device, b.fx1, b.fy1, b.fx2, b.fy2, b.ms)) }
     if (path === '/ai') { const b = await readJson(req); return ok(res, await aiControl(b.device, b.text)) }
     if (path === '/bridge') { const b = await readJson(req); return ok(res, await bridgeStream(b.from, b.to, b.opts)) }
     if (path === '/pcstream') { const b = await readJson(req); return ok(res, await pcStreamTo(b.device, b.opts)) }
