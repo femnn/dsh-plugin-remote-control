@@ -682,6 +682,12 @@ window.__ModuleLoader__.load({
           note(v.ok ? 'ok' : 'err', v.ok ? 'AIUI 操作完成' : 'AIUI 操作失败')
         } catch (e) { setAixOut('❌ ' + e.message); note('err', e.message) } finally { setAixBusy('') }
       }
+      const doScrcpy = async () => {
+        if (!targetId) { note('err', '请先选择设备'); return }
+        setBusy('scrcpy')
+        try { const v = await api('/scrcpy-open', { device: targetId }); note('ok', v.note || '已打开流畅投屏窗口') }
+        catch (e) { note('err', e.message) } finally { setBusy('') }
+      }
       const doCleanup = async () => {
         setCleanupBusy(true); setCleanupInfo('')
         try {
@@ -1284,6 +1290,7 @@ window.__ModuleLoader__.load({
         curOnline ? h('button', { style: { ...S.ghost(disabled), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => setLiveView((v) => !v) }, liveView ? '暂停' : '实时') : null,
         curOnline ? h('button', { style: { ...S.primary(false), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => setBigView(true), title: '放大画面，方便操控' }, '⤢ 放大') : null,
         curOnline ? h('button', { style: { ...S.ghost(busy === 'pcstream'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doPcStream, disabled: busy === 'pcstream', title: '把这台设备的屏幕显示电脑画面' }, '💻 投电脑') : null,
+        curOnline ? h('button', { style: { ...S.primary(busy === 'scrcpy'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doScrcpy, disabled: busy === 'scrcpy', title: '用内置 scrcpy 打开硬件解码的流畅投屏窗口（可在窗口里鼠标/键盘直接操控）' }, '🖥 流畅') : null,
       )
 
       const segTabs = h('div', { style: { display: 'flex', gap: 4, padding: 3, background: C.layer, border: `1px solid ${C.border}`, borderRadius: 9, margin: '8px 0' } },

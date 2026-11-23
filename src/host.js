@@ -17,6 +17,7 @@ import { createWriteStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import httpMod from 'node:http'
 import httpsMod from 'node:https'
 
@@ -1407,6 +1408,32 @@ export function apply(ctx, config) {
    * APK 安装任务：先传文件，再在后台跑 adb install，前端轮询进度。
    * adb install 不吐百分比，所以用「已用时间 / 预计总时长」估算，并配合阶段文字。
    */
+  // ---- scrcpy 流畅投屏：用打包在插件里的 scrcpy 客户端，开一个硬件解码的低延迟窗口（Pinky 级流畅、可鼠标键盘直接操控）----
+  const __binDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin')
+  let scrcpyChild = null
+  function resolveScrcpyBin() {
+    const c = join(__binDir, 'scrcpy')
+    try { return existsSync(c) ? c : '' } catch { return '' }
+  }
+  async function openScrcpy(device) {
+    const t = await resolveTarget(device)
+    if (!t) throw Object.assign(new Error('还没有连接设备'), { status: 409 })
+    const bin = resolveScrcpyBin()
+    if (!bin) throw Object.assign(new Error('未找到内置 scrcpy，请重装插件'), { status: 500 })
+    // 关掉上一个 scrcpy 窗口
+    if (scrcpyChild) { try { process.kill(-scrcpyChild.pid, 'SIGKILL') } catch { try { scrcpyChild.kill('SIGKILL') } catch { /* ignore */ } } scrcpyChild = null }
+    const env = { ...process.env, ADB: join(__binDir, 'adb'), PATH: `${__binDir}:${process.env.PATH || ''}` }
+    // 只保留这一个设备：先断开其它多余连接能提高稳定性（不强制）
+    let child
+    try {
+      child = spawn(bin, ['-s', t, '--max-size=1024', '--video-bit-rate=8M', '--stay-awake', '--window-title=Rokid/' + t], { env, stdio: 'ignore', detached: true })
+    } catch (e) { throw Object.assign(new Error('启动 scrcpy 失败：' + (e.message || e)), { status: 500 }) }
+    child.unref()
+    scrcpyChild = child
+    child.on('exit', () => { if (scrcpyChild === child) scrcpyChild = null })
+    return { ok: true, serial: t, pid: child.pid, note: '已在电脑上打开流畅投屏窗口（可鼠标/键盘直接操控设备）' }
+  }
+
   const installJobs = new Map()
 
   async function startInstall(req) {
@@ -2930,6 +2957,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     if (path === '/rename') { const b = await readJson(req); return ok(res, await rename(b.device, b.name)) }
     if (path === '/adb-reset') return ok(res, await adbReset())
     if (path === '/cleanup') return ok(res, await cleanup())
+    if (path === '/scrcpy-open') { const b = await readJson(req); return ok(res, await openScrcpy(b.device)) }
     if (path === '/aix-deploy') { const b = await readJson(req); return ok(res, await aixDeploy(b)) }
     if (path === '/aix-device') { const b = await readJson(req); return ok(res, await aixDevice(b)) }
     if (path === '/pick') { const b = await readJson(req); return ok(res, await pickPath(b.kind)) }
