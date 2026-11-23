@@ -1417,48 +1417,75 @@ export function apply(ctx, config) {
     const filename = rawName ? decodeURIComponent(String(rawName)) : `app-${Date.now()}.apk`
     const jobId = `install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const job = {
-      id: jobId,
-      filename,
-      device: t,
-      phase: 'uploading',
-      progress: 0,
-      message: '正在上传到电脑临时目录…',
-      done: false,
-      ok: false,
-      error: '',
-      startedAt: Date.now(),
-      bytes: 0,
+      id: jobId, filename, device: t, phase: 'uploading', progress: 0,
+      message: '正在上传到电脑临时目录…', done: false, ok: false, error: '',
+      startedAt: Date.now(), bytes: 0, pushed: 0, mbps: 0,
     }
     installJobs.set(jobId, job)
-    // 先把文件完整落盘，再回 jobId。
-    // 不能在响应发出后才继续读 body —— 那样连接一断，上传就被截断成 0 字节。
     let tmp = ''
     try {
       tmp = await mkdtemp(join(tmpdir(), 'dsh-phone-install-'))
+      // 1) 浏览器 → 电脑临时目录（本地，很快）
       const { file, size } = await pipeBodyToFile(req, tmp, filename.replace(/[/\\]/g, '_'))
       job.bytes = size
-      job.phase = 'installing'
-      job.progress = 5
-      job.message = `已上传 ${(size / 1048576).toFixed(1)} MB，正在安装…`
-      // 安装在后台跑，前端轮询 /install-status 看进度。
+      job.phase = 'uploading'
+      job.progress = 100
+      job.message = '已接收文件，准备传到手机…'
+      // 2) 传到手机 + 安装（后台跑，前端轮询 /install-status）
       ;(async () => {
+        heavyBusy.add(t) // 暂停该设备实时画面，让出无线带宽
+        const remote = `/data/local/tmp/dsh-install-${jobId}.apk`
         try {
-          const r = await adb(withTarget(['install', '-r', file], t), { timeout: 600000 })
+          job.phase = 'pushing'
+          job.message = '正在传输到手机…'
+          // 真实进度：adb push 后台跑，同时轮询设备端文件大小算百分比/速度
+          let pushDone = false
+          const pushP = adb(withTarget(['push', file, remote], t), { timeout: 3600000 })
+            .then((r) => { pushDone = true; return r })
+            .catch((e) => { pushDone = true; return { ok: false, stderr: String(e && e.message || e) } })
+          const t0 = Date.now()
+          while (!pushDone) {
+            await sleep(1200)
+            if (pushDone) break
+            const st = await adb(withTarget(['shell', `stat -c %s ${remote} 2>/dev/null || echo 0`], t), { timeout: 8000 }).catch(() => null)
+            const got = Number((st && st.stdout || '0').trim()) || 0
+            job.pushed = got
+            const secs = (Date.now() - t0) / 1000
+            job.mbps = secs > 0 ? (got / 1048576 / secs) : 0
+            const pct = size ? Math.min(99, Math.round((got / size) * 100)) : 0
+            job.progress = pct
+            job.message = `正在传输到手机… ${(got / 1048576).toFixed(1)}/${(size / 1048576).toFixed(1)} MB（${job.mbps.toFixed(2)} MB/s）`
+          }
+          const pr = await pushP
+          if (!pr || !pr.ok) {
+            // push 失败时，有些设备允许先尝试 adb install 兜底
+            job.ok = false
+            job.error = String(pr && pr.stderr || '传输失败')
+            job.message = '传输到手机失败：' + job.error
+            return
+          }
+          // 3) 安装
+          job.phase = 'installing'
+          job.progress = 99
+          job.message = '文件已传到手机，正在安装…'
+          const r = await adb(withTarget(['shell', 'pm', 'install', '-r', remote], t), { timeout: 1800000 })
           const text = `${r.stdout || ''}${r.stderr || ''}`.trim()
           if (!r.ok || !/Success/i.test(text)) {
             job.ok = false
             job.error = text || '安装失败'
-            job.message = '安装失败'
+            job.message = '安装失败：' + job.error
           } else {
             job.ok = true
             job.progress = 100
             job.message = '安装完成'
           }
+          adb(withTarget(['shell', `rm -f ${remote}`], t), { timeout: 8000 }).catch(() => {})
         } catch (e) {
           job.ok = false
           job.error = String(e.message || e)
           job.message = '安装失败'
         } finally {
+          heavyBusy.delete(t)
           job.done = true
           job.finishedAt = Date.now()
           if (tmp) await rm(tmp, { recursive: true, force: true }).catch(() => {})
@@ -2625,6 +2652,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
   // 每台设备只跑一个采集进程，多个查看者共享同一批帧
   // （设备端 screenrecord 只能有一个，第二个会抢编码器把画面搞卡/搞黑）。
   const liveHubs = new Map()   // serial -> {res:Set, stop:boolean, child, lastFrame}
+  const heavyBusy = new Set()  // 正在传大文件/装 APK 的设备 serial：暂停实时画面，让出无线带宽
   // 本插件起过的所有采集进程（shell/adb/ffmpeg）。插件重装或卸载时必须全部杀掉，
   // 否则它们会继续占着设备的视频编码器 → 新流黑屏、设备卡死。
   const ownedChildren = new Set()
@@ -2838,7 +2866,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
       // grabbing 标记防止截图/编码重叠（重叠会又去抢编码器）。
       let grabbing = false
       const ticker = setInterval(() => {
-        if (hub.stop || grabbing) return
+        if (hub.stop || grabbing || heavyBusy.has(serial)) return
         // 最近 0.4 秒内已经有实时帧了，就不重复用截图刷。
         if (Date.now() - hub.lastFrameAt < 400) return
         grabbing = true
@@ -2846,6 +2874,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
       }, 250)
       if (typeof ticker.unref === 'function') ticker.unref()
       while (!hub.stop) {
+        if (heavyBusy.has(serial)) { await sleep(800); continue }
         const online = await usable(serial).catch(() => false)
         if (!online) { await sleep(1500); continue }
         // 不再周期性发 KEYCODE_WAKEUP：那会反复触发人脸/指纹「智能解锁」。
