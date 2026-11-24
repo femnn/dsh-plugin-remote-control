@@ -1903,11 +1903,24 @@ export function apply(ctx, config) {
     if (!t) throw Object.assign(new Error('还没有连接手机'), { status: 409 })
     const kind = payload.kind
     if (kind === 'key' && payload.name === 'screentoggle') {
-      // 熄屏/唤醒切换：醒着就 SLEEP，睡着就 WAKEUP
-      const pw = await adb(withTarget(['shell', 'dumpsys power 2>/dev/null | grep -m1 mWakefulness='], t), { timeout: 8000 }).catch(() => null)
-      const awake = /Awake/i.test((pw && pw.stdout) || '')
-      await adb(withTarget(['shell', 'input', 'keyevent', awake ? 'KEYCODE_SLEEP' : 'KEYCODE_WAKEUP'], t), { timeout: 8000 })
-      return { ok: true, device: t, slept: awake }
+      // 熄屏/唤醒切换：醒着就 SLEEP；睡着就 WAKEUP，唤不醒(电视深睡)再按 POWER 兜底
+      const readWake = async () => {
+        const pw = await adb(withTarget(['shell', 'dumpsys power 2>/dev/null | grep -m1 mWakefulness='], t), { timeout: 8000 }).catch(() => null)
+        return /Awake/i.test((pw && pw.stdout) || '')
+      }
+      const awake = await readWake()
+      if (awake) {
+        await adb(withTarget(['shell', 'input', 'keyevent', 'KEYCODE_SLEEP'], t), { timeout: 8000 })
+        return { ok: true, device: t, slept: true }
+      }
+      await adb(withTarget(['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], t), { timeout: 8000 })
+      await sleep(500)
+      if (!(await readWake())) {
+        await adb(withTarget(['shell', 'input', 'keyevent', 'KEYCODE_POWER'], t), { timeout: 8000 })
+        await sleep(600)
+        await adb(withTarget(['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], t), { timeout: 8000 })
+      }
+      return { ok: true, device: t, slept: false }
     }
     let args
     if (kind === 'tap') args = ['input', 'tap', String(Number(payload.x) || 0), String(Number(payload.y) || 0)]
@@ -1955,6 +1968,9 @@ export function apply(ctx, config) {
           'settings put secure screensaver_enabled 0',
           'settings put secure screensaver_activate_on_sleep 0',
           'settings put secure screensaver_activate_on_dock 0',
+          'svc power stayon true',
+          'settings put system screen_off_timeout 2147483647',
+          'settings put global stay_on_while_plugged_in 3',
         ]
       : [
           'dumpsys deviceidle reset >/dev/null 2>&1',
