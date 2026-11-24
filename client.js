@@ -841,13 +841,26 @@ window.__ModuleLoader__.load({
       const [pop, setPop] = useState(null)
       const popRef = useRef(null)
       const popDragRef = useRef(null)
+      const POP_KEY = 'dsh-phone-remote-pop-geom'
+      const popAr = () => (liveAspect > 0 ? liveAspect : (isGlasses ? 1 : isTv ? 16 / 9 : 9 / 16))
+      const readPopSaved = () => { try { const v = JSON.parse((window.localStorage && localStorage.getItem(POP_KEY)) || 'null'); if (v && v.w > 120 && v.h > 120) return v } catch (e) { /* ignore */ } return null }
+      const savePop = (p) => { try { if (window.localStorage && p) localStorage.setItem(POP_KEY, JSON.stringify({ x: p.x, y: p.y, w: p.w, h: p.h })) } catch (e) { /* ignore */ } }
+      const setPopSizeByH = (hgt) => setPop((p) => { if (!p) return p; const w = Math.max(200, Math.round(hgt * popAr())); const np = { ...p, w, h: hgt }; savePop(np); return np })
       const openPopout = () => {
         if (!targetId) { note('err', '请先选择设备'); return }
-        setPop((p) => p || { x: 150, y: 90, w: 430, h: 760 })
+        setPop((p) => {
+          if (p) return p
+          const saved = readPopSaved()
+          if (saved) return saved
+          const ar = popAr()
+          let w, h
+          if (ar >= 1) { w = 780; h = Math.max(200, Math.round(780 / ar)) } else { h = 760; w = Math.max(200, Math.round(760 * ar)) }
+          return { x: Math.max(20, (window.innerWidth || 1200) - w - 40), y: 80, w, h }
+        })
       }
       const popDown = (mode) => (e) => { e.stopPropagation(); popDragRef.current = { mode, sx: e.clientX, sy: e.clientY, ox: pop.x, oy: pop.y, ow: pop.w, oh: pop.h }; try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ } }
-      const popMove = (e) => { const d = popDragRef.current; if (!d) return; const dx = e.clientX - d.sx, dy = e.clientY - d.sy; if (d.mode === 'move') setPop((p) => p ? { ...p, x: Math.max(0, Math.min((window.innerWidth || 1200) - p.w, d.ox + dx)), y: Math.max(0, d.oy + dy) } : p); else setPop((p) => p ? { ...p, w: Math.max(240, d.ow + dx), h: Math.max(320, d.oh + dy) } : p) }
-      const popUp = (e) => { popDragRef.current = null; try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ } }
+      const popMove = (e) => { const d = popDragRef.current; if (!d) return; const dx = e.clientX - d.sx, dy = e.clientY - d.sy; if (d.mode === 'move') setPop((p) => p ? { ...p, x: Math.max(0, Math.min((window.innerWidth || 1200) - p.w, d.ox + dx)), y: Math.max(0, d.oy + dy) } : p); else setPop((p) => p ? { ...p, w: Math.max(240, d.ow + dx), h: Math.max(240, d.oh + dy) } : p) }
+      const popUp = (e) => { popDragRef.current = null; try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ } setPop((p) => { if (p) savePop(p); return p }) }
 
       const disabled = Boolean(busy)
       const camSupported = (() => { try { return typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function' } catch { return false } })()
@@ -1492,10 +1505,10 @@ window.__ModuleLoader__.load({
       const popOverlay = pop ? h('div', { key: 'popwin', style: { position: 'fixed', left: pop.x, top: pop.y, width: pop.w, height: pop.h, zIndex: 2147483000, background: '#0b0d10', border: '1px solid #333', borderRadius: 10, boxShadow: '0 12px 50px rgba(0,0,0,.7)', overflow: 'hidden', display: 'flex', flexDirection: 'column' } },
         h('div', { style: { height: 32, display: 'flex', alignItems: 'center', gap: 5, padding: '0 8px', cursor: 'move', background: '#15181d', borderBottom: '1px solid #262a31', userSelect: 'none', touchAction: 'none' }, onPointerDown: popDown('move'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp },
           h('span', { style: { fontSize: 12, color: '#cdd', flex: '1 1 auto', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' } }, (targetDevice ? (targetDevice.name || targetDevice.model || '') : '') + ' · 副屏（可拖动/缩放）'),
-          h('button', { style: popBtnStyle, onClick: () => setPop((p) => p ? { ...p, w: 320, h: 560 } : p) }, '小'),
-          h('button', { style: popBtnStyle, onClick: () => setPop((p) => p ? { ...p, w: 460, h: 820 } : p) }, '中'),
-          h('button', { style: popBtnStyle, onClick: () => setPop((p) => p ? { ...p, w: 660, h: 1120 } : p) }, '大'),
-          h('button', { style: { ...popBtnStyle, color: '#fff', background: '#a33', border: '1px solid #a33' }, onClick: () => setPop(null) }, '关闭 ✕'),
+          h('button', { style: popBtnStyle, onPointerDown: (e) => e.stopPropagation(), onClick: () => setPopSizeByH(420) }, '小'),
+          h('button', { style: popBtnStyle, onPointerDown: (e) => e.stopPropagation(), onClick: () => setPopSizeByH(640) }, '中'),
+          h('button', { style: popBtnStyle, onPointerDown: (e) => e.stopPropagation(), onClick: () => setPopSizeByH(900) }, '大'),
+          h('button', { style: { ...popBtnStyle, color: '#fff', background: '#a33', border: '1px solid #a33' }, onPointerDown: (e) => e.stopPropagation(), onClick: () => setPop(null) }, '关闭 ✕'),
         ),
         h('div', { ref: popRef, style: { flex: '1 1 auto', position: 'relative', background: '#000', cursor: 'crosshair', touchAction: 'none', userSelect: 'none', overscrollBehavior: 'contain' }, onClick: doTapFrac, onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: () => { dragRef.current = null; setTapPing(null) } },
           h('img', { src: `${API}/live?device=${encodeURIComponent(targetId || '')}&q=10&n=${liveNonce}`, alt: '副屏画面', onError: () => { setTimeout(() => setLiveNonce((x) => x + 1), 2500) }, style: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' } }),
