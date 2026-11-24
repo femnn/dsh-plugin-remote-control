@@ -864,7 +864,7 @@ window.__ModuleLoader__.load({
         if (!targetId) { note('err', '请先选择设备'); return }
         const _k = targetDevice && targetDevice.kind
         // 手机/手表/平板：用 scrcpy 真流畅窗口（顺滑操控）；电视/眼镜：用页面内浮动窗（MJPEG，scrcpy 不支持）
-        if (_k === 'phone' || _k === 'watch' || _k === 'tablet' || !_k) { doScrcpy(); return }
+        if (_k === 'phone' || _k === 'watch' || _k === 'tablet' || _k === 'glasses' || !_k) { doScrcpy(); return }
         setPop((p) => {
           if (p) return p
           const vw = window.innerWidth || 1200, vh = window.innerHeight || 800
@@ -1276,8 +1276,8 @@ window.__ModuleLoader__.load({
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 } },
           ...(curKind === 'tv'
             ? [keyBtn('back', 'back', '返回'), keyBtn('home', 'home', '主菜单')]
-            : curKind === 'watch'
-              ? [keyBtn('dpadCenter', 'check', '单点确定'), keyBtn('back', 'back', '双击返回')]
+            : (curKind === 'glasses' || curKind === 'watch')
+              ? [keyBtn('enter', 'check', '单点确定'), keyBtn('back', 'back', '双击返回')]
               : [keyBtn('home', 'home', '主菜单'), keyBtn('recents', 'recents', '后台')]),
           h('div', { style: { display: 'flex', height: 46, boxSizing: 'border-box', border: `1px solid ${C.border3}`, borderRadius: 8, overflow: 'hidden' } },
             h('button', { style: { flex: '1 1 50%', border: 'none', background: C.bg, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }, onClick: () => doKey('volumeDown'), disabled, title: '音量-' }, h(Ic, { name: 'volDown', size: 16 })),
