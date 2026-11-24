@@ -1902,7 +1902,10 @@ export function apply(ctx, config) {
     let args
     if (kind === 'tap') args = ['input', 'tap', String(Number(payload.x) || 0), String(Number(payload.y) || 0)]
     else if (kind === 'swipe') args = ['input', 'swipe', String(Number(payload.x1) || 0), String(Number(payload.y1) || 0), String(Number(payload.x2) || 0), String(Number(payload.y2) || 0), String(Number(payload.ms) || 300)]
-    else if (kind === 'key') { const code = KEY_BY_NAME[payload.name] ?? Number(payload.code); if (!code) throw Object.assign(new Error('未知按键'), { status: 400 }); args = ['input', 'keyevent', String(code)] }
+    else if (kind === 'key') {
+      if (payload.name === 'longOk') { args = ['input', 'keyevent', '--longpress', 'KEYCODE_DPAD_CENTER'] }
+      else { const code = KEY_BY_NAME[payload.name] ?? Number(payload.code); if (!code) throw Object.assign(new Error('未知按键'), { status: 400 }); args = ['input', 'keyevent', String(code)] }
+    }
     else if (kind === 'text') { const text = String(payload.text ?? ''); if (!text) throw Object.assign(new Error('文本为空'), { status: 400 }); const encoded = `'${text.replace(/ /g, '%s').replace(/'/g, "'\\''")}'`; args = ['input', 'text', encoded] }
     else throw Object.assign(new Error('不支持的输入类型'), { status: 400 })
     const r = await adb(withTarget(['shell', ...args], t), { timeout: 15000 })

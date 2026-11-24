@@ -832,33 +832,22 @@ window.__ModuleLoader__.load({
         else { if (a.timer) clearTimeout(a.timer); a.timer = setTimeout(() => { a.t = Date.now(); flushWheel() }, 130) }
       }
       useEffect(() => {
-        const els = [liveRef.current, bigRef.current].filter(Boolean)
+        const els = [liveRef.current, bigRef.current, popRef.current].filter(Boolean)
         els.forEach((el) => el.addEventListener('wheel', onWheelNative, { passive: false }))
         return () => els.forEach((el) => el.removeEventListener('wheel', onWheelNative))
       })
 
+      // 副屏：应用内浮动窗口（不需要浏览器弹窗权限，可拖动/缩放）
+      const [pop, setPop] = useState(null)
+      const popRef = useRef(null)
+      const popDragRef = useRef(null)
       const openPopout = () => {
         if (!targetId) { note('err', '请先选择设备'); return }
-        const nm = targetDevice ? (targetDevice.name || targetDevice.model || '') : ''
-        const w = window.open('', 'phonepop_' + targetId, 'width=460,height=820,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no')
-        if (!w) { note('err', '弹窗被拦截了，请允许本页面弹出窗口后重试'); return }
-        const origin = (window.location && window.location.origin) || ''
-        const liveUrl = origin + API + '/live?device=' + encodeURIComponent(targetId) + '&q=10'
-        const html = '<!doctype html><html><head><meta charset="utf-8"><title>' + (nm || '副屏') + ' · 副屏</title>' +
-          '<style>html,body{margin:0;height:100%;background:#0b0d10;overflow:hidden;font-family:-apple-system,system-ui,sans-serif}' +
-          '#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}' +
-          '#v{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}' +
-          '#bar{position:fixed;top:6px;left:6px;display:flex;gap:4px;opacity:.12;transition:opacity .2s;z-index:9}' +
-          '#bar:hover{opacity:1}#bar button{background:rgba(40,44,52,.9);color:#cdd;border:1px solid #333;border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer}' +
-          '#bar button:hover{background:#2b6cff;color:#fff}</style></head><body>' +
-          '<div id="wrap"><img id="v" alt="副屏"></div>' +
-          '<div id="bar"><button onclick="sz(320,580)">小</button><button onclick="sz(460,820)">中</button><button onclick="sz(640,1120)">大</button><button onclick="fs()">全屏</button></div>' +
-          '<scr' + 'ipt>var U=' + JSON.stringify(liveUrl) + ';var img=document.getElementById("v");' +
-          'function go(){img.src=U+"&n="+Date.now();}img.onerror=function(){setTimeout(go,1500)};go();' +
-          'function sz(a,b){try{window.resizeTo(a,b)}catch(e){}}' +
-          'function fs(){try{if(document.fullscreenElement)document.exitFullscreen();else document.documentElement.requestFullscreen()}catch(e){}}</scr' + 'ipt></body></html>'
-        try { w.document.open(); w.document.write(html); w.document.close() } catch (e) { note('err', '打开副屏失败：' + (e.message || e)) }
+        setPop((p) => p || { x: 150, y: 90, w: 430, h: 760 })
       }
+      const popDown = (mode) => (e) => { e.stopPropagation(); popDragRef.current = { mode, sx: e.clientX, sy: e.clientY, ox: pop.x, oy: pop.y, ow: pop.w, oh: pop.h }; try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ } }
+      const popMove = (e) => { const d = popDragRef.current; if (!d) return; const dx = e.clientX - d.sx, dy = e.clientY - d.sy; if (d.mode === 'move') setPop((p) => p ? { ...p, x: Math.max(0, Math.min((window.innerWidth || 1200) - p.w, d.ox + dx)), y: Math.max(0, d.oy + dy) } : p); else setPop((p) => p ? { ...p, w: Math.max(240, d.ow + dx), h: Math.max(320, d.oh + dy) } : p) }
+      const popUp = (e) => { popDragRef.current = null; try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ } }
 
       const disabled = Boolean(busy)
       const camSupported = (() => { try { return typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function' } catch { return false } })()
@@ -1223,6 +1212,7 @@ window.__ModuleLoader__.load({
           keyBtn('menu', 'keypad', '功能菜单'),
           keyBtn('volumeUp', 'volUp', '音量+'),
           keyBtn('volumeDown', 'volDown', '音量-'),
+          keyBtn('longOk', 'check', '长按确定'),
         ),
         isGlasses ? h('div', { style: { marginTop: 10, fontSize: 11, color: C.text3, lineHeight: 1.5 } }, '🧩 AIUI 工程部署已移到「发送文件」标签页（选眼镜后可在那里部署工程做真机测试）。') : null,
         h('div', { style: S.section }, t('ctl.text')),
@@ -1498,7 +1488,23 @@ window.__ModuleLoader__.load({
         h('div', { style: { marginTop: 8, color: '#aaa', fontSize: 11 } }, '点空白处或「关闭」退出放大'),
       ) : null
 
-      return h('div', { style: S.root, 'data-phone-remote': '' }, h('style', { key: 'dsh-kf' }, '@keyframes dshIndet{0%{margin-left:-38%}100%{margin-left:100%}}'), header, toast, body, bigModal,
+      const popBtnStyle = { background: '#2a2e37', color: '#cdd', border: '1px solid #3a3f4a', borderRadius: 6, fontSize: 11, padding: '2px 7px', cursor: 'pointer' }
+      const popOverlay = pop ? h('div', { key: 'popwin', style: { position: 'fixed', left: pop.x, top: pop.y, width: pop.w, height: pop.h, zIndex: 2147483000, background: '#0b0d10', border: '1px solid #333', borderRadius: 10, boxShadow: '0 12px 50px rgba(0,0,0,.7)', overflow: 'hidden', display: 'flex', flexDirection: 'column' } },
+        h('div', { style: { height: 32, display: 'flex', alignItems: 'center', gap: 5, padding: '0 8px', cursor: 'move', background: '#15181d', borderBottom: '1px solid #262a31', userSelect: 'none', touchAction: 'none' }, onPointerDown: popDown('move'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp },
+          h('span', { style: { fontSize: 12, color: '#cdd', flex: '1 1 auto', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' } }, (targetDevice ? (targetDevice.name || targetDevice.model || '') : '') + ' · 副屏（可拖动/缩放）'),
+          h('button', { style: popBtnStyle, onClick: () => setPop((p) => p ? { ...p, w: 320, h: 560 } : p) }, '小'),
+          h('button', { style: popBtnStyle, onClick: () => setPop((p) => p ? { ...p, w: 460, h: 820 } : p) }, '中'),
+          h('button', { style: popBtnStyle, onClick: () => setPop((p) => p ? { ...p, w: 660, h: 1120 } : p) }, '大'),
+          h('button', { style: { ...popBtnStyle, color: '#fff', background: '#a33', border: '1px solid #a33' }, onClick: () => setPop(null) }, '关闭 ✕'),
+        ),
+        h('div', { ref: popRef, style: { flex: '1 1 auto', position: 'relative', background: '#000', cursor: 'crosshair', touchAction: 'none', userSelect: 'none', overscrollBehavior: 'contain' }, onClick: doTapFrac, onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: () => { dragRef.current = null; setTapPing(null) } },
+          h('img', { src: `${API}/live?device=${encodeURIComponent(targetId || '')}&q=10&n=${liveNonce}`, alt: '副屏画面', onError: () => { setTimeout(() => setLiveNonce((x) => x + 1), 2500) }, style: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' } }),
+          tapPing ? h('span', { style: { position: 'absolute', left: tapPing.x - 9, top: tapPing.y - 9, width: 18, height: 18, borderRadius: 9, border: '2px solid rgba(43,108,255,0.9)', pointerEvents: 'none' } }) : null,
+          h('div', { style: { position: 'absolute', right: 0, bottom: 0, width: 18, height: 18, cursor: 'nwse-resize', background: 'linear-gradient(135deg, transparent 0%, transparent 50%, #666 50%, #666 100%)' }, onPointerDown: popDown('resize'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp }),
+        ),
+      ) : null
+
+      return h('div', { style: S.root, 'data-phone-remote': '' }, h('style', { key: 'dsh-kf' }, '@keyframes dshIndet{0%{margin-left:-38%}100%{margin-left:100%}}'), header, toast, body, bigModal, popOverlay,
         drawerPanel('devices', '所有设备', devicesPanel),
         drawerPanel('connect', '连接新设备', addSection))
     }
