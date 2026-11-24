@@ -1464,6 +1464,8 @@ export function apply(ctx, config) {
       ;(async () => {
         heavyBusy.add(t)
         try {
+          // best-effort：关掉 adb 安装校验(部分机型/纯净模式会因此少弹验证；vivo 账号密码验证仍需系统设置里关)
+          await adb(withTarget(['shell', 'settings', 'put', 'global', 'verifier_verify_adb_installs', '0'], t), { timeout: 6000 }).catch(() => {})
           const r = await adb(withTarget(['install', '-r', file], t), { timeout: 3600000 })
           const text = `${r.stdout || ''}${r.stderr || ''}`.trim()
           if (!r.ok || !/Success/i.test(text)) {

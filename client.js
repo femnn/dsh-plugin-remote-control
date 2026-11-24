@@ -1144,11 +1144,7 @@ window.__ModuleLoader__.load({
       const doSwipe = async (x1, y1, x2, y2) => { try { await api('/input', { kind: 'swipe', x1, y1, x2, y2, ms: 200, device: targetId }); note('ok', '已滑动') } catch (e) { note('err', e.message) } }
       // 多设备切换条：选哪台，下面所有操作就打给哪台。
       // 设备选择在左侧列表完成。发送文件时会显示一个「发到哪台」横幅，避免发错设备。
-      const targetPicker = h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '7px 9px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.layer, marginBottom: 10, fontSize: 12 } },
-        h('span', { style: S.dot(Boolean(targetDevice && targetDevice.state === 'device')) }),
-        h('span', { style: { flex: '1 1 auto', fontWeight: 600, color: C.text } }, `发送到：${targetDevice ? (targetDevice.name || targetDevice.model || '设备') : '未选择设备'}${targetDevice && targetDevice.state !== 'device' ? '（离线）' : ''}`),
-        h('span', { style: { fontSize: 10.5, color: C.text3, whiteSpace: 'nowrap' } }, targetDevice ? targetDevice.serial : ''),
-      )
+      const targetPicker = null
 
       // AIUI 工程部署（挪到「发送文件」页，仅眼镜显示）
       const aixBlock = targetKind === 'glasses' ? h('div', { style: { marginTop: 14, padding: 10, border: `1px solid ${C.border3}`, borderRadius: 8, background: C.layer } },
@@ -1279,7 +1275,7 @@ window.__ModuleLoader__.load({
         h('div', { style: S.section }, '功能按键'),
         h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 } },
           ...(curKind === 'tv'
-            ? [keyBtn('back', 'back', '返回'), keyBtn('home', 'home', '主菜单'), keyBtn('menu', 'keypad', '功能菜单')]
+            ? [keyBtn('back', 'back', '返回'), keyBtn('home', 'home', '主菜单')]
             : curKind === 'watch'
               ? [keyBtn('dpadCenter', 'check', '单点确定'), keyBtn('back', 'back', '双击返回')]
               : [keyBtn('home', 'home', '主菜单'), keyBtn('recents', 'recents', '后台')]),
@@ -1290,7 +1286,6 @@ window.__ModuleLoader__.load({
           ),
           keyBtn('screentoggle', 'power', '熄屏/唤醒'),
         ),
-        isGlasses ? h('div', { style: { marginTop: 10, fontSize: 11, color: C.text3, lineHeight: 1.5 } }, '🧩 AIUI 工程部署已移到「发送文件」标签页（选眼镜后可在那里部署工程做真机测试）。') : null,
         h('div', { style: S.section }, t('ctl.text')),
         h('div', { style: S.row },
           h('input', { style: S.input, placeholder: t('ctl.textPlaceholder'), value: text, onChange: (e) => setText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') doText() } }),
