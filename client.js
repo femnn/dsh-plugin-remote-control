@@ -850,16 +850,26 @@ window.__ModuleLoader__.load({
         if (!targetId) { note('err', '请先选择设备'); return }
         setPop((p) => {
           if (p) return p
+          const vw = window.innerWidth || 1200, vh = window.innerHeight || 800
+          const maxW = Math.min(1000, Math.round(vw * 0.70)), maxH = Math.min(760, Math.round(vh * 0.72))
           const saved = readPopSaved()
-          if (saved) return saved
+          if (saved) {
+            // 钳制到视口内，避免之前存下的大尺寸把副屏撑得过满。
+            let w = saved.w, h = saved.h
+            const k = Math.min(1, maxW / w, maxH / h)
+            w = Math.round(w * k); h = Math.round(h * k)
+            const x = Math.max(0, Math.min(saved.x || 0, vw - w - 10))
+            const y = Math.max(0, Math.min(saved.y || 80, vh - 50))
+            const np = { x, y, w, h }; savePop(np); return np
+          }
           const ar = popAr()
           let w, h
-          if (ar >= 1) { w = 780; h = Math.max(200, Math.round(780 / ar)) } else { h = 760; w = Math.max(200, Math.round(760 * ar)) }
-          return { x: Math.max(20, (window.innerWidth || 1200) - w - 40), y: 80, w, h }
+          if (ar >= 1) { w = Math.min(720, maxW); h = Math.max(200, Math.round(w / ar)) } else { h = Math.min(680, maxH); w = Math.max(200, Math.round(h * ar)) }
+          return { x: Math.max(20, vw - w - 40), y: 80, w, h }
         })
       }
       const popDown = (mode) => (e) => { e.stopPropagation(); popDragRef.current = { mode, sx: e.clientX, sy: e.clientY, ox: pop.x, oy: pop.y, ow: pop.w, oh: pop.h }; try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ } }
-      const popMove = (e) => { const d = popDragRef.current; if (!d) return; const dx = e.clientX - d.sx, dy = e.clientY - d.sy; if (d.mode === 'move') setPop((p) => p ? { ...p, x: Math.max(0, Math.min((window.innerWidth || 1200) - p.w, d.ox + dx)), y: Math.max(0, d.oy + dy) } : p); else setPop((p) => p ? { ...p, w: Math.max(240, d.ow + dx), h: Math.max(240, d.oh + dy) } : p) }
+      const popMove = (e) => { const d = popDragRef.current; if (!d) return; const dx = e.clientX - d.sx, dy = e.clientY - d.sy; if (d.mode === 'move') setPop((p) => p ? { ...p, x: Math.max(0, Math.min((window.innerWidth || 1200) - p.w, d.ox + dx)), y: Math.max(0, d.oy + dy) } : p); else setPop((p) => p ? { ...p, w: Math.min(Math.min(1100, Math.round((window.innerWidth || 1200) * 0.85)), Math.max(240, d.ow + dx)), h: Math.min(Math.min(900, Math.round((window.innerHeight || 800) * 0.88)), Math.max(240, d.oh + dy)) } : p) }
       const popUp = (e) => { popDragRef.current = null; try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ } setPop((p) => { if (p) savePop(p); return p }) }
 
       const disabled = Boolean(busy)
