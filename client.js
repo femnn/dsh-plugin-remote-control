@@ -843,16 +843,16 @@ window.__ModuleLoader__.load({
       const popDragRef = useRef(null)
       const POP_KEY = 'dsh-phone-remote-pop-geom'
       const popAr = () => (liveAspect > 0 ? liveAspect : (isGlasses ? 1 : isTv ? 16 / 9 : 9 / 16))
-      const readPopSaved = () => { try { const v = JSON.parse((window.localStorage && localStorage.getItem(POP_KEY)) || 'null'); if (v && v.w > 120 && v.h > 120) return v } catch (e) { /* ignore */ } return null }
-      const savePop = (p) => { try { if (window.localStorage && p) localStorage.setItem(POP_KEY, JSON.stringify({ x: p.x, y: p.y, w: p.w, h: p.h })) } catch (e) { /* ignore */ } }
-      const setPopSizeByH = (hgt) => setPop((p) => { if (!p) return p; const w = Math.max(200, Math.round(hgt * popAr())); const np = { ...p, w, h: hgt }; savePop(np); return np })
+      const readPopSaved = (dk) => { try { const v = JSON.parse((window.localStorage && localStorage.getItem(POP_KEY + '::' + (dk || ''))) || 'null'); if (v && v.w > 120 && v.h > 120) return v } catch (e) { /* ignore */ } return null }
+      const savePop = (p, dk) => { try { if (window.localStorage && p) localStorage.setItem(POP_KEY + '::' + (dk || ''), JSON.stringify({ x: p.x, y: p.y, w: p.w, h: p.h })) } catch (e) { /* ignore */ } }
+      const setPopSizeByH = (hgt) => setPop((p) => { if (!p) return p; const w = Math.max(200, Math.round(hgt * popAr())); const np = { ...p, w, h: hgt }; savePop(np, targetId); return np })
       const openPopout = () => {
         if (!targetId) { note('err', '请先选择设备'); return }
         setPop((p) => {
           if (p) return p
           const vw = window.innerWidth || 1200, vh = window.innerHeight || 800
           const maxW = Math.min(1000, Math.round(vw * 0.70)), maxH = Math.min(760, Math.round(vh * 0.72))
-          const saved = readPopSaved()
+          const saved = readPopSaved(targetId)
           if (saved) {
             // 钳制到视口内，避免之前存下的大尺寸把副屏撑得过满。
             let w = saved.w, h = saved.h
@@ -860,7 +860,7 @@ window.__ModuleLoader__.load({
             w = Math.round(w * k); h = Math.round(h * k)
             const x = Math.max(0, Math.min(saved.x || 0, vw - w - 10))
             const y = Math.max(0, Math.min(saved.y || 80, vh - 50))
-            const np = { x, y, w, h }; savePop(np); return np
+            const np = { x, y, w, h }; savePop(np, targetId); return np
           }
           const ar = popAr()
           let w, h
@@ -870,7 +870,7 @@ window.__ModuleLoader__.load({
       }
       const popDown = (mode) => (e) => { e.stopPropagation(); popDragRef.current = { mode, sx: e.clientX, sy: e.clientY, ox: pop.x, oy: pop.y, ow: pop.w, oh: pop.h }; try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ } }
       const popMove = (e) => { const d = popDragRef.current; if (!d) return; const dx = e.clientX - d.sx, dy = e.clientY - d.sy; if (d.mode === 'move') setPop((p) => p ? { ...p, x: Math.max(0, Math.min((window.innerWidth || 1200) - p.w, d.ox + dx)), y: Math.max(0, d.oy + dy) } : p); else setPop((p) => p ? { ...p, w: Math.min(Math.min(1100, Math.round((window.innerWidth || 1200) * 0.85)), Math.max(240, d.ow + dx)), h: Math.min(Math.min(900, Math.round((window.innerHeight || 800) * 0.88)), Math.max(240, d.oh + dy)) } : p) }
-      const popUp = (e) => { popDragRef.current = null; try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ } setPop((p) => { if (p) savePop(p); return p }) }
+      const popUp = (e) => { popDragRef.current = null; try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ } setPop((p) => { if (p) savePop(p, targetId); return p }) }
 
       const disabled = Boolean(busy)
       const camSupported = (() => { try { return typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function' } catch { return false } })()
@@ -1082,13 +1082,6 @@ window.__ModuleLoader__.load({
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
           h('div', { style: { flex: '1 1 auto', fontSize: 14, fontWeight: 700 } }, '远程操控'),
           h('button', { style: { ...S.iconBtn(disabled), width: 28, height: 28 }, title: '刷新本插件（重载客户端代码）', 'aria-label': '刷新', onClick: () => { try { window.location.reload() } catch { /* ignore */ } } }, h(Ic, { name: 'refresh', size: 15 })),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' } },
-            onlineDevices.map((d) => d.battery ? h('span', {
-              key: 'bat' + d.key,
-              title: (d.name || d.model || '设备') + ' 电量' + (d.battery.charging ? '（充电中）' : ''),
-              style: { fontSize: 11.5, color: C.text2, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
-            }, (d.battery.charging ? '⚡' : '🔋') + d.battery.level + '%') : null),
-          ),
         ),
         adbFound ? null : h('div', { style: { marginTop: 8, fontSize: 11.5, color: C.danger } }, t('conn.noAdb')),
       )
@@ -1353,7 +1346,10 @@ window.__ModuleLoader__.load({
           ),
           h('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden' } },
             h('div', { style: { fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, nm),
-            h('div', { style: { fontSize: 9.5, color: on ? C.ok : C.text3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, on ? '在线' : '离线'),
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 9.5, color: on ? C.ok : C.text3, whiteSpace: 'nowrap', overflow: 'hidden' } },
+              h('span', null, on ? '在线' : '离线'),
+              d.battery ? h('span', { style: { marginLeft: 'auto', color: C.text2, fontVariantNumeric: 'tabular-nums' }, title: '电量' + d.battery.level + '%' + (d.battery.charging ? '（充电中）' : '') }, (d.battery.charging ? '⚡' : '🔋') + d.battery.level + '%') : null,
+            ),
           ),
         )
       }) : h('div', { style: { padding: '8px 4px', fontSize: 11, color: C.text3 } }, '还没有设备')
@@ -1461,7 +1457,10 @@ window.__ModuleLoader__.load({
             h('span', { style: S.dot(on) }),
             h('div', { style: { flex: '1 1 auto', minWidth: 0 } },
               h('div', { style: { fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, nm),
-              h('div', { style: { fontSize: 9.5, color: on ? C.ok : C.text3 } }, `${on ? '在线' : '离线'}${d.battery ? ' · ' + d.battery.level + '%' : ''}`),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 9.5, color: on ? C.ok : C.text3 } },
+                h('span', null, on ? '在线' : '离线'),
+                d.battery ? h('span', { style: { color: C.text2, fontVariantNumeric: 'tabular-nums' }, title: '电量' + d.battery.level + '%' }, (d.battery.charging ? '⚡' : '🔋') + d.battery.level + '%') : null,
+              ),
             ),
             streaming ? h('span', { style: { width: 6, height: 6, borderRadius: 3, background: C.ok } }) : null,
           ),
