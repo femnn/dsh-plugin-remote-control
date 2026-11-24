@@ -2670,7 +2670,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
       res.end('没有可用的设备')
       return
     }
-    const quality = String(Math.min(20, Math.max(2, Number(url.searchParams.get('q')) || 9)))
+    const quality = String(Math.min(22, Math.max(12, Number(url.searchParams.get('q')) || 9)))
     // 清晰度不重要、流畅优先：按设备真实宽高比缩到长边约 640，低清 screenrecord 带宽小、帧率高。
     let size = /^\d{2,4}x\d{2,4}$/.test(url.searchParams.get('size') || '') ? url.searchParams.get('size') : ''
     let tw = 0, th = 0
@@ -2683,11 +2683,11 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
       } catch { /* ignore */ }
       if (dw && dh) {
         const long = Math.max(dw, dh)
-        const scale = Math.min(1, 480 / long)
+        const scale = Math.min(1, 420 / long)
         const even = (n) => Math.max(16, Math.round(n * scale / 16) * 16)
         size = `${even(dw)}x${even(dh)}`
       } else {
-        size = '480x270'
+        size = '426x240'
       }
     }
     try { const [w, h] = size.split('x').map(Number); tw = w; th = h } catch { /* ignore */ }
@@ -2816,7 +2816,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     const runScreenrecord = () => new Promise((resolve) => {
       if (hub.stop) { resolve(0); return }
       const cmd = `"${bin}" -s "${serial}" exec-out screenrecord --output-format=h264 --time-limit 40 --size ${size} - | ` +
-        `"${ffmpeg}" -hide_banner -loglevel error -use_wallclock_as_timestamps 1 -f h264 -i pipe:0 -vf fps=15 -c:v mjpeg -q:v ${quality} -flush_packets 1 -f mpjpeg -`
+        `"${ffmpeg}" -hide_banner -loglevel error -use_wallclock_as_timestamps 1 -f h264 -i pipe:0 -vf fps=12 -c:v mjpeg -q:v ${quality} -flush_packets 1 -f mpjpeg -`
       let finished = false
       let guard = null
       const done = () => { if (!finished) { finished = true; if (guard) clearTimeout(guard); hub.child = null; resolve(1) } }

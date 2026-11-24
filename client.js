@@ -758,8 +758,22 @@ window.__ModuleLoader__.load({
         // 真实拖动时长（服务端会保证 >=250ms，太快会被设备当成点击）
         const dur = Math.max(250, Math.min(600, Date.now() - d.t0))
         if (!d.moved) {
+          const held = Date.now() - d.t0
+          const kind = targetDevice && targetDevice.kind
+          if (held >= 600) {
+            // 按住不动 → 长按（触摸设备=同点长按700ms；电视=长按确定）
+            suppressClickRef.current = true
+            if (kind === 'tv') { try { await api('/input', { kind: 'key', name: 'longOk', device: targetId }) } catch (err) { note('err', err.message) } }
+            else {
+              const rect = d.rect
+              const fx = (d.x0 - rect.left) / rect.width
+              const fy = (d.y0 - rect.top) / rect.height
+              if (fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1) { try { await api('/swipefrac', { device: targetId, fx1: fx, fy1: fy, fx2: fx, fy2: fy, ms: 700 }) } catch (err) { note('err', err.message) } }
+            }
+            setTimeout(() => { setTapPing(null); suppressClickRef.current = false }, 700)
+            return
+          }
           suppressClickRef.current = false
-          // 没拖动 → 就是点击（走点击分支）
           await doTapFrac(e)
           setTimeout(() => setTapPing(null), 500)
           return
@@ -885,15 +899,18 @@ window.__ModuleLoader__.load({
           const ny = Math.max(0, Math.min(vh - 44, d.oy + dy))
           d.el.style.left = nx + 'px'; d.el.style.top = ny + 'px'
         } else {
-          // 锁定宽高比：只等比缩放（画面完整、信息不变少），并保证窗口不超出屏幕（右下角标始终可抓）。
-          const ratio = (d.ow / d.oh) || 1
-          let nw = Math.abs(dx) >= Math.abs(dy) ? (d.ow + dx) : (d.ow + dy * ratio)
-          nw = Math.max(200, nw)
-          let nh = nw / ratio
+          // 按“画面内容比例”锁定：内容区(窗口高-32标题栏)始终=画面比例 → 内容完整、不变形、不裁切。
+          const ar = popAr() || 1
+          const HEAD = 32
+          let contentW
+          if (Math.abs(dx) >= Math.abs(dy)) contentW = d.ow + dx
+          else contentW = ((d.oh - HEAD) + dy) * ar
+          contentW = Math.max(160, contentW)
+          let contentH = contentW / ar
+          let nw = contentW, nh = contentH + HEAD
           const maxW = vw - d.ox - 6, maxH = vh - d.oy - 6
-          if (nw > maxW) { nw = maxW; nh = nw / ratio }
-          if (nh > maxH) { nh = maxH; nw = nh * ratio }
-          if (nw < 200) { nw = 200; nh = nw / ratio }
+          if (nw > maxW) { nw = maxW; contentW = nw; contentH = nw / ar; nh = contentH + HEAD }
+          if (nh > maxH) { nh = maxH; contentH = nh - HEAD; nw = contentH * ar }
           d.el.style.width = Math.round(nw) + 'px'; d.el.style.height = Math.round(nh) + 'px'
         }
       }
@@ -1550,7 +1567,7 @@ window.__ModuleLoader__.load({
         h('div', { ref: popRef, style: { flex: '1 1 auto', position: 'relative', background: '#000', cursor: 'crosshair', touchAction: 'none', userSelect: 'none', overscrollBehavior: 'contain' }, onClick: doTapFrac, onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: () => { dragRef.current = null; setTapPing(null) } },
           h('img', { src: `${API}/live?device=${encodeURIComponent(targetId || '')}&q=10&n=${liveNonce}`, alt: '副屏画面', onError: () => { setTimeout(() => setLiveNonce((x) => x + 1), 2500) }, style: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' } }),
           tapPing ? h('span', { style: { position: 'absolute', left: tapPing.x - 9, top: tapPing.y - 9, width: 18, height: 18, borderRadius: 9, border: '2px solid rgba(43,108,255,0.9)', pointerEvents: 'none' } }) : null,
-          h('div', { style: { position: 'absolute', right: 0, bottom: 0, width: 30, height: 30, cursor: 'nwse-resize', touchAction: 'none', zIndex: 5, background: 'linear-gradient(135deg, transparent 0%, transparent 46%, rgba(150,160,175,.7) 46%, rgba(150,160,175,.7) 55%, transparent 55%, transparent 66%, rgba(150,160,175,.95) 66%, rgba(150,160,175,.95) 78%, transparent 78%)' }, onPointerDown: popDown('resize'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp }),
+          h('div', { style: { position: 'absolute', right: 0, bottom: 0, width: 34, height: 34, cursor: 'nwse-resize', touchAction: 'none', zIndex: 5, background: 'linear-gradient(135deg, transparent 0%, transparent 46%, rgba(150,160,175,.7) 46%, rgba(150,160,175,.7) 55%, transparent 55%, transparent 66%, rgba(150,160,175,.95) 66%, rgba(150,160,175,.95) 78%, transparent 78%)' }, onPointerDown: popDown('resize'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp }),
         ),
       ) : null
 
