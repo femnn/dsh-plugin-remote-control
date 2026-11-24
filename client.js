@@ -885,9 +885,16 @@ window.__ModuleLoader__.load({
           const ny = Math.max(0, Math.min(vh - 44, d.oy + dy))
           d.el.style.left = nx + 'px'; d.el.style.top = ny + 'px'
         } else {
-          const nw = Math.min(Math.min(1100, Math.round(vw * 0.95)), Math.max(220, d.ow + dx))
-          const nh = Math.min(Math.min(900, Math.round(vh * 0.94)), Math.max(180, d.oh + dy))
-          d.el.style.width = nw + 'px'; d.el.style.height = nh + 'px'
+          // 锁定宽高比：只等比缩放（画面完整、信息不变少），并保证窗口不超出屏幕（右下角标始终可抓）。
+          const ratio = (d.ow / d.oh) || 1
+          let nw = Math.abs(dx) >= Math.abs(dy) ? (d.ow + dx) : (d.ow + dy * ratio)
+          nw = Math.max(200, nw)
+          let nh = nw / ratio
+          const maxW = vw - d.ox - 6, maxH = vh - d.oy - 6
+          if (nw > maxW) { nw = maxW; nh = nw / ratio }
+          if (nh > maxH) { nh = maxH; nw = nh * ratio }
+          if (nw < 200) { nw = 200; nh = nw / ratio }
+          d.el.style.width = Math.round(nw) + 'px'; d.el.style.height = Math.round(nh) + 'px'
         }
       }
       const popUp = (e) => {

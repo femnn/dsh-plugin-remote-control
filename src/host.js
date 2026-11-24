@@ -2815,15 +2815,12 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     })
     const runScreenrecord = () => new Promise((resolve) => {
       if (hub.stop) { resolve(0); return }
-      const cmd = `"${bin}" -s "${serial}" exec-out screenrecord --output-format=h264 --time-limit 170 --size ${size} - | ` +
-        `"${ffmpeg}" -hide_banner -loglevel error -fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 -use_wallclock_as_timestamps 1 -f h264 -i pipe:0 -vf fps=20 -c:v mjpeg -q:v ${quality} -flush_packets 1 -f mpjpeg -`
+      const cmd = `"${bin}" -s "${serial}" exec-out screenrecord --output-format=h264 --time-limit 40 --size ${size} - | ` +
+        `"${ffmpeg}" -hide_banner -loglevel error -use_wallclock_as_timestamps 1 -f h264 -i pipe:0 -vf fps=15 -c:v mjpeg -q:v ${quality} -flush_packets 1 -f mpjpeg -`
       let finished = false
       let guard = null
       const done = () => { if (!finished) { finished = true; if (guard) clearTimeout(guard); hub.child = null; resolve(1) } }
       try { hub.child = spawn('/bin/sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'], detached: true }) } catch { done(); return }
-      // 2.6s 还没出任何帧 → 这台设备 screenrecord 不可用，提前结束让主循环切到截图流。
-      guard = setTimeout(() => { if (Date.now() - hub.lastFrameAt > 2600) { try { hub.child && hub.child.kill('SIGKILL') } catch { /* ignore */ } } }, 2700)
-      if (typeof guard.unref === 'function') guard.unref()
       ownedChildren.add(hub.child)
       hub.child.on('close', () => ownedChildren.delete(hub.child))
       // ffmpeg 的 mpjpeg 输出自带 --ffmpeg 边界，整段转发即可。
