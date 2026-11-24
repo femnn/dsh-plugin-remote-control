@@ -767,12 +767,26 @@ window.__ModuleLoader__.load({
         // 拖过 → 紧接着的 click 要忽略（否则会多点一次）
         suppressClickRef.current = true
         const rect = d.rect
+        const dx = d.x1 - d.x0, dy = d.y1 - d.y0
+        setTimeout(() => setTapPing(null), 350)
+        setTimeout(() => { suppressClickRef.current = false }, 800)
+        // 电视这类用方向键的设备：拖动 = 上/下/左/右 方向键（触摸滑动对它无效）。
+        const kind = targetDevice && targetDevice.kind
+        if (kind === 'tv') {
+          const dist = Math.hypot(dx, dy)
+          const steps = Math.max(1, Math.min(8, Math.round(dist / 45)))
+          const horiz = Math.abs(dx) > Math.abs(dy)
+          const name = horiz ? (dx > 0 ? 'dpadRight' : 'dpadLeft') : (dy > 0 ? 'dpadDown' : 'dpadUp')
+          for (let i = 0; i < steps; i++) {
+            try { await api('/input', { kind: 'key', name, device: targetId }) } catch (err) { note('err', err.message); break }
+          }
+          return
+        }
+        // 手机/手表/眼镜等触摸设备：拖动 = 真实滑动。
         const fx1 = (d.x0 - rect.left) / rect.width
         const fy1 = (d.y0 - rect.top) / rect.height
         const fx2 = (d.x1 - rect.left) / rect.width
         const fy2 = (d.y1 - rect.top) / rect.height
-        setTimeout(() => setTapPing(null), 350)
-        setTimeout(() => { suppressClickRef.current = false }, 800)
         try { await api('/swipefrac', { device: targetId, fx1, fy1, fx2, fy2, ms: dur }) }
         catch (err) { note('err', err.message) }
       }
@@ -1064,8 +1078,8 @@ window.__ModuleLoader__.load({
           h('div', { style: { fontSize: 11, color: C.text3, marginTop: 6 } }, '点文件夹可进入，选到想要的目录即可（当前：' + (dest || '—') + '）'),
         ) : null,
         h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 } },
-          h('button', { style: S.tile, onClick: () => fileRef.current && fileRef.current.click(), disabled }, h('span', { style: S.tileIcon }, h(Ic, { name: 'folder', size: 18 })), h('span', { style: S.tileTitle }, t('files.send')), h('span', { style: S.tileSub }, t('files.sendSub'))),
-          h('button', { style: S.tile, onClick: () => apkRef.current && apkRef.current.click(), disabled }, h('span', { style: S.tileIcon }, h(Ic, { name: 'apk', size: 18 })), h('span', { style: S.tileTitle }, t('files.install')), h('span', { style: S.tileSub }, t('files.installSub'))),
+          h('button', { style: S.tile, onClick: () => fileRef.current && fileRef.current.click(), disabled }, h('span', { style: S.tileIcon }, h(Ic, { name: 'folder', size: 18 })), h('span', { style: S.tileTitle }, `发送文件到「${targetLabel || '设备'}」`), h('span', { style: S.tileSub }, t('files.sendSub'))),
+          h('button', { style: S.tile, onClick: () => apkRef.current && apkRef.current.click(), disabled }, h('span', { style: S.tileIcon }, h(Ic, { name: 'apk', size: 18 })), h('span', { style: S.tileTitle }, `安装 APK 到「${targetLabel || '设备'}」`), h('span', { style: S.tileSub }, t('files.installSub'))),
         ),
         h('input', { ref: fileRef, type: 'file', multiple: true, style: { display: 'none' }, onChange: (e) => sendFiles(Array.from(e.target.files || []), false) }),
         h('input', { ref: apkRef, type: 'file', accept: '.apk,application/vnd.android.package-archive', style: { display: 'none' }, onChange: (e) => sendFiles(Array.from(e.target.files || []), true) }),
