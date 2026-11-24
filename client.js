@@ -885,9 +885,13 @@ window.__ModuleLoader__.load({
       const popDown = (mode) => (e) => {
         e.stopPropagation(); try { e.preventDefault() } catch (err) { /* ignore */ }
         const el = popWinRef.current
-        const r = el ? el.getBoundingClientRect() : { left: pop.x, top: pop.y, width: pop.w, height: pop.h }
+        if (!el) return
+        const r = el.getBoundingClientRect()
         popDragRef.current = { mode, sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, ow: r.width, oh: r.height, el }
-        try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ }
+        const mv = (ev) => popMove(ev)
+        const up = (ev) => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); popUp(ev) }
+        window.addEventListener('pointermove', mv)
+        window.addEventListener('pointerup', up)
       }
       // 拖动/缩放时直接改 DOM 样式（不触发整页重渲染 → 跟手、不卡），松手才写回状态。
       const popMove = (e) => {
@@ -914,9 +918,8 @@ window.__ModuleLoader__.load({
           d.el.style.width = Math.round(nw) + 'px'; d.el.style.height = Math.round(nh) + 'px'
         }
       }
-      const popUp = (e) => {
+      const popUp = () => {
         const d = popDragRef.current; popDragRef.current = null
-        try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ }
         if (d && d.el) { const r = d.el.getBoundingClientRect(); setPop(() => { const np = { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; savePop(np, targetId); return np }) }
       }
 
@@ -1560,14 +1563,14 @@ window.__ModuleLoader__.load({
 
       const popBtnStyle = { background: '#2a2e37', color: '#cdd', border: '1px solid #3a3f4a', borderRadius: 6, fontSize: 11, padding: '2px 7px', cursor: 'pointer' }
       const popOverlay = pop ? h('div', { key: 'popwin', ref: popWinRef, style: { position: 'fixed', left: pop.x, top: pop.y, width: pop.w, height: pop.h, zIndex: 2147483000, background: '#0b0d10', border: '1px solid #333', borderRadius: 10, boxShadow: '0 12px 50px rgba(0,0,0,.7)', overflow: 'hidden', display: 'flex', flexDirection: 'column' } },
-        h('div', { style: { height: 32, display: 'flex', alignItems: 'center', gap: 5, padding: '0 8px', cursor: 'move', background: '#15181d', borderBottom: '1px solid #262a31', userSelect: 'none', touchAction: 'none' }, onPointerDown: popDown('move'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp },
+        h('div', { style: { height: 32, display: 'flex', alignItems: 'center', gap: 5, padding: '0 8px', cursor: 'move', background: '#15181d', borderBottom: '1px solid #262a31', userSelect: 'none', touchAction: 'none' }, onPointerDown: popDown('move') },
           h('span', { style: { fontSize: 12, color: '#cdd', flex: '1 1 auto', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' } }, (targetDevice ? (targetDevice.name || targetDevice.model || '') : '') + ' · 副屏（可拖动/缩放）'),
           h('button', { style: { ...popBtnStyle, color: '#fff', background: '#a33', border: '1px solid #a33' }, onPointerDown: (e) => e.stopPropagation(), onClick: () => setPop(null) }, '关闭 ✕'),
         ),
-        h('div', { ref: popRef, style: { flex: '1 1 auto', position: 'relative', background: '#000', cursor: 'crosshair', touchAction: 'none', userSelect: 'none', overscrollBehavior: 'contain' }, onClick: doTapFrac, onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: () => { dragRef.current = null; setTapPing(null) } },
+        h('div', { ref: popRef, style: { flex: '1 1 auto', minHeight: 0, minWidth: 0, position: 'relative', background: '#000', overflow: 'hidden', cursor: 'crosshair', touchAction: 'none', userSelect: 'none', overscrollBehavior: 'contain' }, onClick: doTapFrac, onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: () => { dragRef.current = null; setTapPing(null) } },
           h('img', { src: `${API}/live?device=${encodeURIComponent(targetId || '')}&q=10&n=${liveNonce}`, alt: '副屏画面', onError: () => { setTimeout(() => setLiveNonce((x) => x + 1), 2500) }, style: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' } }),
           tapPing ? h('span', { style: { position: 'absolute', left: tapPing.x - 9, top: tapPing.y - 9, width: 18, height: 18, borderRadius: 9, border: '2px solid rgba(43,108,255,0.9)', pointerEvents: 'none' } }) : null,
-          h('div', { style: { position: 'absolute', right: 0, bottom: 0, width: 34, height: 34, cursor: 'nwse-resize', touchAction: 'none', zIndex: 5, background: 'linear-gradient(135deg, transparent 0%, transparent 46%, rgba(150,160,175,.7) 46%, rgba(150,160,175,.7) 55%, transparent 55%, transparent 66%, rgba(150,160,175,.95) 66%, rgba(150,160,175,.95) 78%, transparent 78%)' }, onPointerDown: popDown('resize'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp }),
+          h('div', { style: { position: 'absolute', right: 0, bottom: 0, width: 34, height: 34, cursor: 'nwse-resize', touchAction: 'none', zIndex: 5, background: 'linear-gradient(135deg, transparent 0%, transparent 46%, rgba(150,160,175,.7) 46%, rgba(150,160,175,.7) 55%, transparent 55%, transparent 66%, rgba(150,160,175,.95) 66%, rgba(150,160,175,.95) 78%, transparent 78%)' }, onPointerDown: popDown('resize') }),
         ),
       ) : null
 
