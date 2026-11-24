@@ -768,7 +768,7 @@ window.__ModuleLoader__.load({
               const rect = d.rect
               const fx = (d.x0 - rect.left) / rect.width
               const fy = (d.y0 - rect.top) / rect.height
-              if (fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1) { try { await api('/swipefrac', { device: targetId, fx1: fx, fy1: fy, fx2: fx, fy2: fy, ms: 700 }) } catch (err) { note('err', err.message) } }
+              if (fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1) { try { await api('/longpressfrac', { device: targetId, fx, fy, ms: 800 }) } catch (err) { note('err', err.message) } }
             }
             setTimeout(() => { setTapPing(null); suppressClickRef.current = false }, 700)
             return
@@ -1453,6 +1453,7 @@ window.__ModuleLoader__.load({
         curOnline ? h('button', { style: { ...(keOn ? S.primary(false) : S.ghost(disabled)), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => doKeepAwake(!keOn), disabled: busy === 'keepawake' }, keOn ? '🔆 防休眠' : '防休眠') : null,
         curOnline ? h('button', { style: { ...S.ghost(disabled), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => setLiveView((v) => !v) }, liveView ? '暂停' : '实时') : null,
         curOnline ? h('button', { style: { ...S.primary(false), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: openPopout, title: '把画面提取成独立副屏窗口（可调整大小/全屏）' }, '⤢ 副屏') : null,
+        curOnline ? h('button', { style: { ...S.primary(busy === 'scrcpy'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doScrcpy, disabled: busy === 'scrcpy', title: 'Pinky 同款 scrcpy 内核：60fps 硬件解码，窗口内用鼠标/触控板直接操控（最流畅）' }, '🎮 真流畅') : null,
         curOnline ? h('button', { style: { ...S.ghost(busy === 'pcstream'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doPcStream, disabled: busy === 'pcstream', title: '把这台设备的屏幕显示电脑画面' }, '💻 投电脑') : null,
       )
 

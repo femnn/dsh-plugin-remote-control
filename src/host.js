@@ -1426,12 +1426,12 @@ export function apply(ctx, config) {
     // 只保留这一个设备：先断开其它多余连接能提高稳定性（不强制）
     let child
     try {
-      child = spawn(bin, ['-s', t, '--max-size=1024', '--video-bit-rate=8M', '--stay-awake', '--window-title=Rokid/' + t], { env, stdio: 'ignore', detached: true })
+      child = spawn(bin, ['-s', t, '--max-size=1280', '--max-fps=60', '--video-bit-rate=12M', '--stay-awake', '--always-on-top', '--window-title=流畅投屏 ' + t], { env, stdio: 'ignore', detached: true })
     } catch (e) { throw Object.assign(new Error('启动 scrcpy 失败：' + (e.message || e)), { status: 500 }) }
     child.unref()
     scrcpyChild = child
     child.on('exit', () => { if (scrcpyChild === child) scrcpyChild = null })
-    return { ok: true, serial: t, pid: child.pid, note: '已在电脑上打开流畅投屏窗口（可鼠标/键盘直接操控设备）' }
+    return { ok: true, serial: t, pid: child.pid, note: '已打开流畅投屏窗口（scrcpy 内核，60fps 硬件解码；窗口内鼠标=点按、拖动=滑动、滚轮=滚动，和 Pinky 同款引擎）' }
   }
 
   const installJobs = new Map()
@@ -1996,6 +1996,24 @@ export function apply(ctx, config) {
     const dur = Math.max(250, Math.min(800, Math.round(want)))
     await adb(withTarget(['shell', 'input', 'swipe', String(x1), String(y1), String(x2), String(y2), String(dur)], t), { timeout: 10000 })
     return { device: t, x1, y1, x2, y2, ms: dur }
+  }
+
+  /** 真实长按：按下→保持→抬起（input swipe 同点是点击，不会长按，所以用 motionevent）。 */
+  async function longPressFrac(device, fx, fy, ms) {
+    const t = await resolveTarget(device)
+    if (!t) throw Object.assign(new Error('还没有连接设备'), { status: 409 })
+    const { w, h } = await deviceSize(t)
+    if (!w || !h) throw Object.assign(new Error('读不到设备分辨率'), { status: 500 })
+    const x = Math.max(0, Math.min(w - 1, Math.round(Number(fx) * w)))
+    const y = Math.max(0, Math.min(h - 1, Math.round(Number(fy) * h)))
+    const sec = Math.max(0.6, Math.min(1.5, (Number(ms) || 800) / 1000))
+    const r = await adb(withTarget(['shell', `input motionevent DOWN ${x} ${y}; sleep ${sec}; input motionevent UP ${x} ${y}`], t), { timeout: 10000 }).catch((e) => ({ ok: false, stderr: String(e && e.message) }))
+    const txt = `${r.stdout || ''}${r.stderr || ''}`
+    if (!r.ok || /Unknown|error|Exception|not found/i.test(txt)) {
+      // 退回同点长 swipe（有些机型 motionevent 不可用）
+      await adb(withTarget(['shell', 'input', 'swipe', String(x), String(y), String(x), String(y), String(Math.round(sec * 1000))], t), { timeout: 10000 })
+    }
+    return { device: t, x, y, ms: Math.round(sec * 1000) }
   }
 
   /** 读取本机 DSH 当前接入的模型（Magpie 网关，OpenAI 兼容），给「AI 操控」用。 */
@@ -2976,6 +2994,7 @@ function fullscr(){ try{ if(document.fullscreenElement) document.exitFullscreen(
     if (path === '/keepawake') { const b = await readJson(req); return ok(res, await keepAwake(b.device, b.on)) }
     if (path === '/tapfrac') { const b = await readJson(req); return ok(res, await tapFrac(b.device, b.fx, b.fy)) }
     if (path === '/swipefrac') { const b = await readJson(req); return ok(res, await swipeFrac(b.device, b.fx1, b.fy1, b.fx2, b.fy2, b.ms)) }
+    if (path === '/longpressfrac') { const b = await readJson(req); return ok(res, await longPressFrac(b.device, b.fx, b.fy, b.ms)) }
     if (path === '/ai') { const b = await readJson(req); return ok(res, await aiControl(b.device, b.text)) }
     if (path === '/bridge') { const b = await readJson(req); return ok(res, await bridgeStream(b.from, b.to, b.opts)) }
     if (path === '/pcstream') { const b = await readJson(req); return ok(res, await pcStreamTo(b.device, b.opts)) }
