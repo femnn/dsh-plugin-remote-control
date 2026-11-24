@@ -627,13 +627,18 @@ window.__ModuleLoader__.load({
       })
       const sendFiles = async (list, install) => {
         if (!list || !list.length) return
+        const devName = targetDevice ? (targetDevice.name || targetDevice.model || targetId) : ''
+        // 先做即时校验，避免「点了没反应」：没选设备 / 设备离线 都立刻给明确提示。
+        if (!targetId) { note('err', '请先在左侧选择设备'); return }
+        if (targetDevice && targetDevice.state !== 'device') { note('err', `设备「${devName}」当前离线，请先连接后再${install ? '安装' : '发送'}`); return }
         setMsg(null)
         // 发送和安装都显示进度条，避免「点了没反应」的错觉。
-        setInstallProgress({ pct: 0, phase: 'uploading', message: install ? '准备安装…' : '准备发送…' })
-        try { const results = []; for (const f of list) results.push(await uploadOne(f, install)); const last = results[results.length - 1]
-          note('ok', install ? `已安装：${last.filename}（${(last.bytes / 1048576).toFixed(1)} MB）` : `已发送 ${results.length} 个 → ${last.remote}\n手机里位置：${last.remote}\n（文件管理里进入 Download/RemoteControl 文件夹即可找到）`)
+        setInstallProgress({ pct: 0, phase: 'uploading', message: install ? `准备安装到「${devName}」…` : `准备发送到「${devName}」…` })
+        try {
+          const results = []; for (const f of list) results.push(await uploadOne(f, install)); const last = results[results.length - 1]
+          note('ok', install ? `✅ 已在「${devName}」安装：${last.filename}（${(last.bytes / 1048576).toFixed(1)} MB）` : `已发送 ${results.length} 个 → ${last.remote}\n位置：${last.remote}\n（文件管理里进入 Download/RemoteControl 文件夹即可找到）`)
           if (!install) { try { const v = await api('/list', { path: dest, device: targetId }); setListing(v.listing) } catch { /* ignore */ } }
-        } catch (e) { note('err', e.message) } finally { setBusy(''); setInstallProgress(null); if (fileRef.current) fileRef.current.value = ''; if (apkRef.current) apkRef.current.value = '' }
+        } catch (e) { note('err', install ? `安装失败：${e.message}` : `发送失败：${e.message}`) } finally { setBusy(''); setInstallProgress(null); if (fileRef.current) fileRef.current.value = ''; if (apkRef.current) apkRef.current.value = '' }
       }
       const refreshDir = async () => { setBusy(t('busy.working')); try { const v = await api('/list', { path: dest, device: targetId }); setListing(v.listing) } catch (e) { note('err', e.message) } finally { setBusy('') } }
       const defDest = (k) => (k === 'glasses' ? '/sdcard/RKDownload' : '/sdcard/Download/RemoteControl')
