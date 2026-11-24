@@ -791,6 +791,52 @@ window.__ModuleLoader__.load({
         catch (err) { note('err', err.message) }
       }
 
+      // —— 触控板/滚轮：两指前后左右滑动 → 映射成设备内对应滑动（触摸设备=swipe，电视=方向键）——
+      const liveRef = useRef(null)
+      const bigRef = useRef(null)
+      const wheelAcc = useRef({ x: 0, y: 0, t: 0, timer: null })
+      const flushWheel = async () => {
+        const a = wheelAcc.current
+        const x = a.x, y = a.y
+        a.x = 0; a.y = 0
+        if (!targetDevice || targetDevice.state !== 'device') return
+        if (Math.hypot(x, y) < 6) return
+        const kind = targetDevice.kind
+        const horiz = Math.abs(x) > Math.abs(y)
+        if (kind === 'tv') {
+          const dist = horiz ? Math.abs(x) : Math.abs(y)
+          const steps = Math.max(1, Math.min(8, Math.round(dist / 50)))
+          const name = horiz ? (x > 0 ? 'dpadRight' : 'dpadLeft') : (y > 0 ? 'dpadDown' : 'dpadUp')
+          for (let i = 0; i < steps; i++) { try { await api('/input', { kind: 'key', name, device: targetId }) } catch { break } }
+          return
+        }
+        // 触摸设备：滚轮方向 → 反向滑动（手指朝相反方向划，内容跟手滚动）
+        const cx = 0.5, cy = 0.5
+        let fx1, fy1, fx2, fy2
+        if (horiz) {
+          const d = Math.max(0.1, Math.min(0.45, Math.abs(x) / 350)); const dir = x > 0 ? -1 : 1
+          fx1 = cx + dir * d / 2; fx2 = cx - dir * d / 2; fy1 = fy2 = cy
+        } else {
+          const d = Math.max(0.1, Math.min(0.45, Math.abs(y) / 350)); const dir = y > 0 ? -1 : 1
+          fy1 = cy + dir * d / 2; fy2 = cy - dir * d / 2; fx1 = fx2 = cx
+        }
+        try { await api('/swipefrac', { device: targetId, fx1, fy1, fx2, fy2, ms: 160 }) } catch { /* ignore */ }
+      }
+      const onWheelNative = (e) => {
+        if (!targetDevice || targetDevice.state !== 'device') return
+        try { e.preventDefault() } catch { /* ignore */ }
+        const a = wheelAcc.current
+        a.x += e.deltaX || 0; a.y += e.deltaY || 0
+        const now = Date.now()
+        if (now - a.t > 120) { a.t = now; flushWheel() }
+        else { if (a.timer) clearTimeout(a.timer); a.timer = setTimeout(() => { a.t = Date.now(); flushWheel() }, 130) }
+      }
+      useEffect(() => {
+        const els = [liveRef.current, bigRef.current].filter(Boolean)
+        els.forEach((el) => el.addEventListener('wheel', onWheelNative, { passive: false }))
+        return () => els.forEach((el) => el.removeEventListener('wheel', onWheelNative))
+      })
+
       const disabled = Boolean(busy)
       const camSupported = (() => { try { return typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function' } catch { return false } })()
 
@@ -1278,11 +1324,12 @@ window.__ModuleLoader__.load({
         ? h('div', { style: { height: 64, width: '100%', maxWidth: 200, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px dashed ${C.border3}`, borderRadius: C.radius, background: C.layer, color: C.text3, fontSize: 11.5, margin: '0 auto' } },
             targetDevice ? '设备离线' : '请先选择设备')
         : h('div', {
+            ref: liveRef,
             style: {
               position: 'relative', width: '100%', maxWidth: liveMaxW, maxHeight: liveMaxH,
               aspectRatio: String(aspect), borderRadius: isTv ? 10 : 16, overflow: 'hidden',
               background: '#0d0f12', border: `1px solid ${C.border2}`, margin: '0 auto', cursor: 'crosshair',
-              touchAction: 'none', userSelect: 'none',
+              touchAction: 'none', userSelect: 'none', overscrollBehavior: 'contain',
             },
             onClick: doTapFrac,
             onPointerDown: onDragStart,
@@ -1398,7 +1445,8 @@ window.__ModuleLoader__.load({
           h('button', { style: { background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 12 }, onClick: (e) => { e.stopPropagation(); setBigView(false) } }, '关闭 ✕'),
         ),
         h('div', {
-          style: { position: 'relative', maxWidth: '96vw', maxHeight: '84vh', aspectRatio: String(aspect), background: '#000', borderRadius: 8, overflow: 'hidden', cursor: 'crosshair', boxShadow: '0 8px 40px rgba(0,0,0,0.6)', touchAction: 'none', userSelect: 'none' },
+          ref: bigRef,
+          style: { position: 'relative', maxWidth: '96vw', maxHeight: '84vh', aspectRatio: String(aspect), background: '#000', borderRadius: 8, overflow: 'hidden', cursor: 'crosshair', boxShadow: '0 8px 40px rgba(0,0,0,0.6)', touchAction: 'none', userSelect: 'none', overscrollBehavior: 'contain' },
           onClick: (e) => { e.stopPropagation(); doTapFrac(e) },
           onPointerDown: (e) => { e.stopPropagation(); onDragStart(e) },
           onPointerMove: (e) => { e.stopPropagation(); onDragMove(e) },
