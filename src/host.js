@@ -24,7 +24,7 @@ import httpsMod from 'node:https'
 const pexec = promisify(execFile)
 
 export const name = 'dsh-phone-remote'
-export const inject = ['webServer']
+export const inject = ['webServer', 'connection']
 
 const PREFIX = '/api/phone-remote'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -3023,6 +3023,13 @@ function fullscr(){ try{ if(document.fullscreenElement) document.exitFullscreen(
       path: PREFIX,
       handler: async (req, res) => {
         try {
+          // DSH 官方信任栅栏：connection.requestRejection 做 Host/Origin 校验并校验
+          // 浏览器登录态，拦掉 DNS rebinding 与「浏览器里任意网页」对本机路由的调用。
+          // 这是每条 Web 路由都该套的标准入口；自写的 makeTrust 保留作纵深防御。
+          const rejection = typeof ctx.connection?.requestRejection === 'function'
+            ? ctx.connection.requestRejection(req)
+            : undefined
+          if (rejection !== undefined) { fail(res, rejection, '未授权'); return }
           if (!makeTrust(req, bindHost)) { fail(res, 403, '未授权'); return }
           const url = new URL(req.url ?? '/', 'http://localhost')
           await handle(req, res, url)
