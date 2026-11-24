@@ -856,12 +856,15 @@ window.__ModuleLoader__.load({
       const popWinRef = useRef(null)
       const popDragRef = useRef(null)
       const POP_KEY = 'dsh-phone-remote-pop-geom'
-      const popAr = () => (liveAspect > 0 ? liveAspect : (isGlasses ? 1 : isTv ? 16 / 9 : 9 / 16))
+      const popAr = () => (liveAspect > 0 ? liveAspect : (isGlasses || isWatch ? 1 : isTv ? 16 / 9 : 9 / 16))
       const readPopSaved = (dk) => { try { const v = JSON.parse((window.localStorage && localStorage.getItem(POP_KEY + '::' + (dk || ''))) || 'null'); if (v && v.w > 120 && v.h > 120) return v } catch (e) { /* ignore */ } return null }
       const savePop = (p, dk) => { try { if (window.localStorage && p) localStorage.setItem(POP_KEY + '::' + (dk || ''), JSON.stringify({ x: p.x, y: p.y, w: p.w, h: p.h })) } catch (e) { /* ignore */ } }
       const setPopSizeByH = (hgt) => setPop((p) => { if (!p) return p; const w = Math.max(200, Math.round(hgt * popAr())); const np = { ...p, w, h: hgt }; savePop(np, targetId); return np })
       const openPopout = () => {
         if (!targetId) { note('err', '请先选择设备'); return }
+        const _k = targetDevice && targetDevice.kind
+        // 手机/手表/平板：用 scrcpy 真流畅窗口（顺滑操控）；电视/眼镜：用页面内浮动窗（MJPEG，scrcpy 不支持）
+        if (_k === 'phone' || _k === 'watch' || _k === 'tablet' || !_k) { doScrcpy(); return }
         setPop((p) => {
           if (p) return p
           const vw = window.innerWidth || 1200, vh = window.innerHeight || 800
@@ -1231,6 +1234,7 @@ window.__ModuleLoader__.load({
         : 'phone'
       const isTv = curKind === 'tv'
       const isGlasses = curKind === 'glasses'
+      const isWatch = curKind === 'watch'
       const keysBlock = isGlasses
         ? h('div', null,
             h('div', { style: S.section }, '镜腿操作'),
@@ -1412,9 +1416,9 @@ window.__ModuleLoader__.load({
         h('button', { style: { ...S.ghost(disabled), width: '100%', marginTop: 6, height: 26, fontSize: 11, padding: 0 }, onClick: () => setDrawer('connect') }, '+ 连接'),
       )
 
-      const aspect = liveAspect > 0 ? liveAspect : (isGlasses ? 1 : isTv ? 16 / 9 : 9 / 16)      // 画面固定小尺寸：保证下方控制板一屏能看全，不用滚动。
-      const liveMaxW = isGlasses ? 220 : isTv ? 320 : 132
-      const liveMaxH = isGlasses ? 220 : isTv ? 180 : 220
+      const aspect = liveAspect > 0 ? liveAspect : (isGlasses || isWatch ? 1 : isTv ? 16 / 9 : 9 / 16)      // 画面固定小尺寸：保证下方控制板一屏能看全，不用滚动。
+      const liveMaxW = isGlasses ? 220 : isWatch ? 168 : isTv ? 320 : 132
+      const liveMaxH = isGlasses ? 220 : isWatch ? 168 : isTv ? 180 : 220
       const livePane = !curOnline
         ? h('div', { style: { height: 64, width: '100%', maxWidth: 200, boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px dashed ${C.border3}`, borderRadius: C.radius, background: C.layer, color: C.text3, fontSize: 11.5, margin: '0 auto' } },
             targetDevice ? '设备离线' : '请先选择设备')
@@ -1452,8 +1456,7 @@ window.__ModuleLoader__.load({
         ),
         curOnline ? h('button', { style: { ...(keOn ? S.primary(false) : S.ghost(disabled)), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => doKeepAwake(!keOn), disabled: busy === 'keepawake' }, keOn ? '🔆 防休眠' : '防休眠') : null,
         curOnline ? h('button', { style: { ...S.ghost(disabled), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => setLiveView((v) => !v) }, liveView ? '暂停' : '实时') : null,
-        curOnline ? h('button', { style: { ...S.primary(false), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: openPopout, title: '把画面提取成独立副屏窗口（可调整大小/全屏）' }, '⤢ 副屏') : null,
-        curOnline ? h('button', { style: { ...S.primary(busy === 'scrcpy'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doScrcpy, disabled: busy === 'scrcpy', title: 'Pinky 同款 scrcpy 内核：60fps 硬件解码，窗口内用鼠标/触控板直接操控（最流畅）' }, '🎮 真流畅') : null,
+        curOnline ? h('button', { style: { ...S.primary(false), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: openPopout, title: '手机/手表：打开真流畅(scrcpy 60fps)窗口，可用鼠标/触控板直接顺滑操控；电视/眼镜：页面内浮动副屏' }, '⤢ 副屏') : null,
         curOnline ? h('button', { style: { ...S.ghost(busy === 'pcstream'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doPcStream, disabled: busy === 'pcstream', title: '把这台设备的屏幕显示电脑画面' }, '💻 投电脑') : null,
       )
 
@@ -1491,9 +1494,9 @@ window.__ModuleLoader__.load({
           style: { display: 'flex', flexDirection: 'column', borderRadius: 10, cursor: 'pointer', overflow: 'hidden', border: `1.5px solid ${chosen ? C.primary : C.border}`, background: C.bg },
           onClick: () => { setTargetKey(id); setDrawer(null) },
         },
-          h('div', { style: { position: 'relative', width: '100%', aspectRatio: dk === 'glasses' ? '1 / 1' : tv ? '16 / 9' : '9 / 16', background: '#0d0f12', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+          h('div', { style: { position: 'relative', width: '100%', aspectRatio: (dk === 'glasses' || dk === 'watch') ? '1 / 1' : tv ? '16 / 9' : '9 / 16', background: '#0d0f12', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
             streaming && on
-              ? h('img', { key: 's-' + id, src: `${API}/live?device=${encodeURIComponent(id)}&q=9`, alt: nm, style: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: dk === 'glasses' ? 'contain' : 'fill' } })
+              ? h('img', { key: 's-' + id, src: `${API}/live?device=${encodeURIComponent(id)}&q=9`, alt: nm, style: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: (dk === 'glasses' || dk === 'watch') ? 'contain' : 'fill' } })
               : h('button', {
                   style: { background: 'transparent', border: 'none', color: '#5b6472', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, cursor: on ? 'pointer' : 'default' },
                   onClick: (e) => { e.stopPropagation(); if (on) toggleStream(id) },

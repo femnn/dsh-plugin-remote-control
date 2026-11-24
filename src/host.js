@@ -313,6 +313,7 @@ export function apply(ctx, config) {
     const s = `${(d && d.model) || ''} ${(d && d.name) || ''} ${(d && d.product) || ''}`.toLowerCase()
     if (/glasses|rg[_-]?glasses|rokid|yodaos|ar\s*lite|ar\s*studio/.test(s)) return 'glasses'
     if (/tv|电视|盒子|box|mitv|投影|projector/.test(s)) return 'tv'
+    if (/watch|手表|腕表|智能表|wear\s?os|smartwatch/.test(s)) return 'watch'
     if (/pad|tablet|平板/.test(s)) return 'tablet'
     return 'phone'
   }
