@@ -837,6 +837,29 @@ window.__ModuleLoader__.load({
         return () => els.forEach((el) => el.removeEventListener('wheel', onWheelNative))
       })
 
+      const openPopout = () => {
+        if (!targetId) { note('err', '请先选择设备'); return }
+        const nm = targetDevice ? (targetDevice.name || targetDevice.model || '') : ''
+        const w = window.open('', 'phonepop_' + targetId, 'width=460,height=820,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no')
+        if (!w) { note('err', '弹窗被拦截了，请允许本页面弹出窗口后重试'); return }
+        const origin = (window.location && window.location.origin) || ''
+        const liveUrl = origin + API + '/live?device=' + encodeURIComponent(targetId) + '&q=10'
+        const html = '<!doctype html><html><head><meta charset="utf-8"><title>' + (nm || '副屏') + ' · 副屏</title>' +
+          '<style>html,body{margin:0;height:100%;background:#0b0d10;overflow:hidden;font-family:-apple-system,system-ui,sans-serif}' +
+          '#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}' +
+          '#v{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}' +
+          '#bar{position:fixed;top:6px;left:6px;display:flex;gap:4px;opacity:.12;transition:opacity .2s;z-index:9}' +
+          '#bar:hover{opacity:1}#bar button{background:rgba(40,44,52,.9);color:#cdd;border:1px solid #333;border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer}' +
+          '#bar button:hover{background:#2b6cff;color:#fff}</style></head><body>' +
+          '<div id="wrap"><img id="v" alt="副屏"></div>' +
+          '<div id="bar"><button onclick="sz(320,580)">小</button><button onclick="sz(460,820)">中</button><button onclick="sz(640,1120)">大</button><button onclick="fs()">全屏</button></div>' +
+          '<scr' + 'ipt>var U=' + JSON.stringify(liveUrl) + ';var img=document.getElementById("v");' +
+          'function go(){img.src=U+"&n="+Date.now();}img.onerror=function(){setTimeout(go,1500)};go();' +
+          'function sz(a,b){try{window.resizeTo(a,b)}catch(e){}}' +
+          'function fs(){try{if(document.fullscreenElement)document.exitFullscreen();else document.documentElement.requestFullscreen()}catch(e){}}</scr' + 'ipt></body></html>'
+        try { w.document.open(); w.document.write(html); w.document.close() } catch (e) { note('err', '打开副屏失败：' + (e.message || e)) }
+      }
+
       const disabled = Boolean(busy)
       const camSupported = (() => { try { return typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function' } catch { return false } })()
 
@@ -1189,7 +1212,10 @@ window.__ModuleLoader__.load({
 
       const controlBody = h('div', null,
         targetPicker,
-        keysBlock,
+        h('div', { style: { margin: '2px 0 6px', padding: '8px 10px', border: `1px solid ${C.border3}`, borderRadius: 8, background: C.layer, fontSize: 11.5, color: C.text2, lineHeight: 1.6 } },
+          h('div', { style: { fontWeight: 600, color: C.text, marginBottom: 2 } }, '👆 在上方画面里直接操控'),
+          isTv ? '触控板两指滑动 / 按住拖动 = 上下左右方向键；点击 = 确定。' : '触控板两指滑动 / 按住拖动 = 画面内滑动；点击 = 点按。',
+        ),
         isGlasses ? h('div', { style: { marginTop: 10, fontSize: 11, color: C.text3, lineHeight: 1.5 } }, '🧩 AIUI 工程部署已移到「发送文件」标签页（选眼镜后可在那里部署工程做真机测试）。') : null,
         h('div', { style: S.section }, t('ctl.text')),
         h('div', { style: S.row },
@@ -1312,6 +1338,7 @@ window.__ModuleLoader__.load({
       }) : h('div', { style: { padding: '8px 4px', fontSize: 11, color: C.text3 } }, '还没有设备')
 
       const leftCol = h('div', { style: { width: 104, flex: '0 0 auto', display: 'flex', flexDirection: 'column', minHeight: 0, borderRight: `1px solid ${C.border}`, padding: '8px 6px' } },
+        h('button', { style: { ...S.ghost(disabled), width: '100%', height: 26, fontSize: 11, padding: 0, marginBottom: 6 }, onClick: () => setDrawer(drawer === 'devices' ? null : 'devices'), title: '所有设备' }, '📱 所有设备'),
         h('div', { style: { fontSize: 10.5, color: C.text3, fontWeight: 600, margin: '0 2px 6px' } }, `设备 (${devices.length})`),
         h('div', { style: { flex: '1 1 auto', overflowY: 'auto', minHeight: 0 } }, leftRows),
         h('button', { style: { ...S.ghost(disabled), width: '100%', marginTop: 6, height: 26, fontSize: 11, padding: 0 }, onClick: () => setDrawer('connect') }, '+ 连接'),
@@ -1351,16 +1378,14 @@ window.__ModuleLoader__.load({
           )
 
       const rightHead = h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 } },
-        h('button', { style: { ...S.ghost(disabled), height: 26, padding: '0 9px', fontSize: 11.5, flex: '0 0 auto' }, onClick: () => setDrawer(drawer === 'devices' ? null : 'devices'), title: '所有设备' }, '📱 所有设备'),
         h('div', { style: { flex: '1 1 auto', minWidth: 0 } },
           h('div', { style: S.sTitle }, targetDevice ? (targetDevice.name || targetDevice.model || '设备') : '未选择设备'),
           h('div', { style: S.sSub }, targetDevice ? `${targetDevice.model || ''} · ${curOnline ? '在线' : '离线'}` : ''),
         ),
         curOnline ? h('button', { style: { ...(keOn ? S.primary(false) : S.ghost(disabled)), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => doKeepAwake(!keOn), disabled: busy === 'keepawake' }, keOn ? '🔆 防休眠' : '防休眠') : null,
         curOnline ? h('button', { style: { ...S.ghost(disabled), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => setLiveView((v) => !v) }, liveView ? '暂停' : '实时') : null,
-        curOnline ? h('button', { style: { ...S.primary(false), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: () => setBigView(true), title: '放大画面，方便操控' }, '⤢ 放大') : null,
+        curOnline ? h('button', { style: { ...S.primary(false), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: openPopout, title: '把画面提取成独立副屏窗口（可调整大小/全屏）' }, '⤢ 副屏') : null,
         curOnline ? h('button', { style: { ...S.ghost(busy === 'pcstream'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doPcStream, disabled: busy === 'pcstream', title: '把这台设备的屏幕显示电脑画面' }, '💻 投电脑') : null,
-        curOnline ? h('button', { style: { ...S.primary(busy === 'scrcpy'), height: 26, padding: '0 9px', fontSize: 11.5 }, onClick: doScrcpy, disabled: busy === 'scrcpy', title: '用内置 scrcpy 打开硬件解码的流畅投屏窗口（可在窗口里鼠标/键盘直接操控）' }, '🖥 流畅') : null,
       )
 
       const segTabs = h('div', { style: { display: 'flex', gap: 4, padding: 3, background: C.layer, border: `1px solid ${C.border}`, borderRadius: 9, margin: '8px 0' } },

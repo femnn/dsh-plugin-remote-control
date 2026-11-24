@@ -2680,11 +2680,11 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
       } catch { /* ignore */ }
       if (dw && dh) {
         const long = Math.max(dw, dh)
-        const scale = Math.min(1, 640 / long)
+        const scale = Math.min(1, 480 / long)
         const even = (n) => Math.max(16, Math.round(n * scale / 16) * 16)
         size = `${even(dw)}x${even(dh)}`
       } else {
-        size = '640x360'
+        size = '480x270'
       }
     }
     try { const [w, h] = size.split('x').map(Number); tw = w; th = h } catch { /* ignore */ }
@@ -2801,11 +2801,15 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     })
     const runScreenrecord = () => new Promise((resolve) => {
       if (hub.stop) { resolve(0); return }
-      const cmd = `"${bin}" -s "${serial}" exec-out screenrecord --output-format=h264 --time-limit 12 --size ${size} - | ` +
-        `"${ffmpeg}" -hide_banner -loglevel error -use_wallclock_as_timestamps 1 -f h264 -i pipe:0 -vf fps=8 -c:v mjpeg -q:v ${quality} -flush_packets 1 -f mpjpeg -`
+      const cmd = `"${bin}" -s "${serial}" exec-out screenrecord --output-format=h264 --time-limit 170 --size ${size} - | ` +
+        `"${ffmpeg}" -hide_banner -loglevel error -fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 -use_wallclock_as_timestamps 1 -f h264 -i pipe:0 -vf fps=20 -c:v mjpeg -q:v ${quality} -flush_packets 1 -f mpjpeg -`
       let finished = false
-      const done = () => { if (!finished) { finished = true; hub.child = null; resolve(1) } }
+      let guard = null
+      const done = () => { if (!finished) { finished = true; if (guard) clearTimeout(guard); hub.child = null; resolve(1) } }
       try { hub.child = spawn('/bin/sh', ['-c', cmd], { stdio: ['ignore', 'pipe', 'ignore'], detached: true }) } catch { done(); return }
+      // 2.6s 还没出任何帧 → 这台设备 screenrecord 不可用，提前结束让主循环切到截图流。
+      guard = setTimeout(() => { if (Date.now() - hub.lastFrameAt > 2600) { try { hub.child && hub.child.kill('SIGKILL') } catch { /* ignore */ } } }, 2700)
+      if (typeof guard.unref === 'function') guard.unref()
       ownedChildren.add(hub.child)
       hub.child.on('close', () => ownedChildren.delete(hub.child))
       // ffmpeg 的 mpjpeg 输出自带 --ffmpeg 边界，整段转发即可。
@@ -2880,25 +2884,16 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
         await runScreenrecord()
         if (hub.stop) break
         const elapsed = Date.now() - started
-        // 短时间内就结束 = 没跑出有效视频流（设备不支持 screenrecord / 画面静止）→ 走截图流。
+        // 结束得快 = screenrecord 没跑出有效视频流（设备不支持/报错，如电视 INVALID_LAYER_STACK）。
         if (elapsed < 6000) {
-          if (!grabbing) {
-            grabbing = true
-            try { push(await grabShot()) } finally { grabbing = false }
-          }
           if (!hub.shotMode) {
-            // 确认 screenrecord 不可用 → 切到常驻截图流（更稳且能持续出帧）。
             const probe = await adb(withTarget(['shell', 'screenrecord --help 2>&1 | head -1'], serial), { timeout: 8000 }).catch(() => null)
-            const supported = Boolean(probe && probe.ok && !/not found|unknown command|Exception/i.test(probe.stdout || ''))
-            if (!supported) {
-              hub.shotMode = true
-              watchNote(serial, '该设备不支持 screenrecord，已切换到常驻截图流')
-            }
+            const supported = Boolean(probe && probe.ok && !/not found|unknown command|Exception|stack/i.test(probe.stdout || ''))
+            // script/录屏彻底不可用、且 screencap 又不慢的设备（眼镜）才切截图流；电视 screencap 慢，走定时截图即可。
+            if (!supported) hub.shotMode = true
           }
-          if (hub.shotMode) {
-            await runShotStream()
-            continue
-          }
+          if (hub.shotMode) { await runShotStream(); continue }
+          if (!grabbing) { grabbing = true; try { push(await grabShot()) } finally { grabbing = false } }
           await sleep(250)
         } else {
           await sleep(200)
@@ -2915,6 +2910,34 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
   async function handle(req, res, url) {
     const path = url.pathname.slice(PREFIX.length) || '/'
     if (path === '/live') return liveStream(req, res, url)
+    if (path === '/popout') {
+      const device = url.searchParams.get('device') || ''
+      const q = url.searchParams.get('q') || '10'
+      const nm = url.searchParams.get('name') || '副屏'
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>${nm} · 副屏</title>
+<style>
+html,body{margin:0;height:100%;background:#0b0d10;overflow:hidden;font-family:-apple-system,system-ui,sans-serif}
+#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+#v{width:100%;height:100%;object-fit:contain;display:block;-webkit-user-select:none;user-select:none;pointer-events:none}
+#bar{position:fixed;top:6px;left:6px;display:flex;gap:4px;opacity:.12;transition:opacity .2s;z-index:9}
+#bar:hover{opacity:1}
+#bar button{background:rgba(40,44,52,.9);color:#cdd;border:1px solid #333;border-radius:6px;font-size:11px;padding:3px 8px;cursor:pointer}
+#bar button:hover{background:#2b6cff;color:#fff}
+</style></head><body>
+<div id="wrap"><img id="v" alt="副屏画面"></div>
+<div id="bar"><button onclick="sz(300,560)">小</button><button onclick="sz(420,780)">中</button><button onclick="sz(600,1040)">大</button><button onclick="fullscr()">全屏</button></div>
+<script>
+var dev=${JSON.stringify(device)}, q=${JSON.stringify(q)};
+var img=document.getElementById('v');
+function start(){ img.src='live?device='+encodeURIComponent(dev)+'&q='+encodeURIComponent(q)+'&n='+Date.now(); }
+img.onerror=function(){ setTimeout(start,1500); };
+start();
+function sz(w,h){ try{ window.resizeTo(w,h); }catch(e){} }
+function fullscr(){ try{ if(document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }catch(e){} }
+</script></body></html>`
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(html); return
+    }
     if (path === '/status') return ok(res, await status())
     if (path === '/discover') return ok(res, await discover())
     if (path === '/select') { const b = await readJson(req); return ok(res, await select(String(b.device || ''))) }
