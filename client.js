@@ -794,42 +794,41 @@ window.__ModuleLoader__.load({
       // —— 触控板/滚轮：两指前后左右滑动 → 映射成设备内对应滑动（触摸设备=swipe，电视=方向键）——
       const liveRef = useRef(null)
       const bigRef = useRef(null)
-      const wheelAcc = useRef({ x: 0, y: 0, t: 0, timer: null })
-      const flushWheel = async () => {
+      const wheelAcc = useRef({ x: 0, y: 0 })
+      const wheelBusy = useRef(false)
+      const pumpWheel = async () => {
+        if (wheelBusy.current) return
+        if (!targetDevice || targetDevice.state !== 'device') { wheelAcc.current.x = 0; wheelAcc.current.y = 0; return }
         const a = wheelAcc.current
-        const x = a.x, y = a.y
-        a.x = 0; a.y = 0
-        if (!targetDevice || targetDevice.state !== 'device') return
-        if (Math.hypot(x, y) < 6) return
-        const kind = targetDevice.kind
-        const horiz = Math.abs(x) > Math.abs(y)
-        if (kind === 'tv') {
-          const dist = horiz ? Math.abs(x) : Math.abs(y)
-          const steps = Math.max(1, Math.min(8, Math.round(dist / 50)))
-          const name = horiz ? (x > 0 ? 'dpadRight' : 'dpadLeft') : (y > 0 ? 'dpadDown' : 'dpadUp')
-          for (let i = 0; i < steps; i++) { try { await api('/input', { kind: 'key', name, device: targetId }) } catch { break } }
-          return
-        }
-        // 触摸设备：滚轮方向 → 反向滑动（手指朝相反方向划，内容跟手滚动）
-        const cx = 0.5, cy = 0.5
-        let fx1, fy1, fx2, fy2
-        if (horiz) {
-          const d = Math.max(0.1, Math.min(0.45, Math.abs(x) / 350)); const dir = x > 0 ? -1 : 1
-          fx1 = cx + dir * d / 2; fx2 = cx - dir * d / 2; fy1 = fy2 = cy
-        } else {
-          const d = Math.max(0.1, Math.min(0.45, Math.abs(y) / 350)); const dir = y > 0 ? -1 : 1
-          fy1 = cy + dir * d / 2; fy2 = cy - dir * d / 2; fx1 = fx2 = cx
-        }
-        try { await api('/swipefrac', { device: targetId, fx1, fy1, fx2, fy2, ms: 160 }) } catch { /* ignore */ }
+        if (Math.hypot(a.x, a.y) < 6) return
+        wheelBusy.current = true
+        const x = a.x, y = a.y; a.x = 0; a.y = 0
+        try {
+          const kind = targetDevice.kind
+          const horiz = Math.abs(x) > Math.abs(y)
+          if (kind === 'tv') {
+            const dist = horiz ? Math.abs(x) : Math.abs(y)
+            const steps = Math.max(1, Math.min(8, Math.round(dist / 50)))
+            const name = horiz ? (x > 0 ? 'dpadRight' : 'dpadLeft') : (y > 0 ? 'dpadDown' : 'dpadUp')
+            for (let i = 0; i < steps; i++) { await api('/input', { kind: 'key', name, device: targetId }).catch(() => {}) }
+          } else {
+            const cx = 0.5, cy = 0.5
+            let fx1, fy1, fx2, fy2
+            if (horiz) { const d = Math.max(0.05, Math.min(0.32, Math.abs(x) / 520)); const dir = x > 0 ? -1 : 1; fx1 = cx + dir * d / 2; fx2 = cx - dir * d / 2; fy1 = fy2 = cy }
+            else { const d = Math.max(0.05, Math.min(0.32, Math.abs(y) / 520)); const dir = y > 0 ? -1 : 1; fy1 = cy + dir * d / 2; fy2 = cy - dir * d / 2; fx1 = fx2 = cx }
+            await api('/swipefrac', { device: targetId, fx1, fy1, fx2, fy2, ms: 110 }).catch(() => {})
+          }
+        } finally { wheelBusy.current = false }
+        // 期间又积累了新的滑动量 → 立即接着发，保证连续跟手、不丢手势
+        const b = wheelAcc.current
+        if (Math.hypot(b.x, b.y) >= 6) pumpWheel()
       }
       const onWheelNative = (e) => {
         if (!targetDevice || targetDevice.state !== 'device') return
         try { e.preventDefault() } catch { /* ignore */ }
-        const a = wheelAcc.current
-        a.x += e.deltaX || 0; a.y += e.deltaY || 0
-        const now = Date.now()
-        if (now - a.t > 120) { a.t = now; flushWheel() }
-        else { if (a.timer) clearTimeout(a.timer); a.timer = setTimeout(() => { a.t = Date.now(); flushWheel() }, 130) }
+        wheelAcc.current.x += e.deltaX || 0
+        wheelAcc.current.y += e.deltaY || 0
+        pumpWheel()
       }
       useEffect(() => {
         const els = [liveRef.current, bigRef.current, popRef.current].filter(Boolean)
@@ -840,6 +839,7 @@ window.__ModuleLoader__.load({
       // 副屏：应用内浮动窗口（不需要浏览器弹窗权限，可拖动/缩放）
       const [pop, setPop] = useState(null)
       const popRef = useRef(null)
+      const popWinRef = useRef(null)
       const popDragRef = useRef(null)
       const POP_KEY = 'dsh-phone-remote-pop-geom'
       const popAr = () => (liveAspect > 0 ? liveAspect : (isGlasses ? 1 : isTv ? 16 / 9 : 9 / 16))
@@ -868,9 +868,33 @@ window.__ModuleLoader__.load({
           return { x: Math.max(20, vw - w - 40), y: 80, w, h }
         })
       }
-      const popDown = (mode) => (e) => { e.stopPropagation(); popDragRef.current = { mode, sx: e.clientX, sy: e.clientY, ox: pop.x, oy: pop.y, ow: pop.w, oh: pop.h }; try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ } }
-      const popMove = (e) => { const d = popDragRef.current; if (!d) return; const dx = e.clientX - d.sx, dy = e.clientY - d.sy; if (d.mode === 'move') setPop((p) => p ? { ...p, x: Math.max(0, Math.min((window.innerWidth || 1200) - p.w, d.ox + dx)), y: Math.max(0, d.oy + dy) } : p); else setPop((p) => p ? { ...p, w: Math.min(Math.min(1100, Math.round((window.innerWidth || 1200) * 0.85)), Math.max(240, d.ow + dx)), h: Math.min(Math.min(900, Math.round((window.innerHeight || 800) * 0.88)), Math.max(240, d.oh + dy)) } : p) }
-      const popUp = (e) => { popDragRef.current = null; try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ } setPop((p) => { if (p) savePop(p, targetId); return p }) }
+      const popDown = (mode) => (e) => {
+        e.stopPropagation(); try { e.preventDefault() } catch (err) { /* ignore */ }
+        const el = popWinRef.current
+        const r = el ? el.getBoundingClientRect() : { left: pop.x, top: pop.y, width: pop.w, height: pop.h }
+        popDragRef.current = { mode, sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, ow: r.width, oh: r.height, el }
+        try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ }
+      }
+      // 拖动/缩放时直接改 DOM 样式（不触发整页重渲染 → 跟手、不卡），松手才写回状态。
+      const popMove = (e) => {
+        const d = popDragRef.current; if (!d || !d.el) return
+        const dx = e.clientX - d.sx, dy = e.clientY - d.sy
+        const vw = window.innerWidth || 1200, vh = window.innerHeight || 800
+        if (d.mode === 'move') {
+          const nx = Math.max(0, Math.min(vw - d.ow, d.ox + dx))
+          const ny = Math.max(0, Math.min(vh - 44, d.oy + dy))
+          d.el.style.left = nx + 'px'; d.el.style.top = ny + 'px'
+        } else {
+          const nw = Math.min(Math.min(1100, Math.round(vw * 0.95)), Math.max(220, d.ow + dx))
+          const nh = Math.min(Math.min(900, Math.round(vh * 0.94)), Math.max(180, d.oh + dy))
+          d.el.style.width = nw + 'px'; d.el.style.height = nh + 'px'
+        }
+      }
+      const popUp = (e) => {
+        const d = popDragRef.current; popDragRef.current = null
+        try { e.currentTarget.releasePointerCapture && e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* ignore */ }
+        if (d && d.el) { const r = d.el.getBoundingClientRect(); setPop(() => { const np = { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; savePop(np, targetId); return np }) }
+      }
 
       const disabled = Boolean(busy)
       const camSupported = (() => { try { return typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function' } catch { return false } })()
@@ -1511,7 +1535,7 @@ window.__ModuleLoader__.load({
       ) : null
 
       const popBtnStyle = { background: '#2a2e37', color: '#cdd', border: '1px solid #3a3f4a', borderRadius: 6, fontSize: 11, padding: '2px 7px', cursor: 'pointer' }
-      const popOverlay = pop ? h('div', { key: 'popwin', style: { position: 'fixed', left: pop.x, top: pop.y, width: pop.w, height: pop.h, zIndex: 2147483000, background: '#0b0d10', border: '1px solid #333', borderRadius: 10, boxShadow: '0 12px 50px rgba(0,0,0,.7)', overflow: 'hidden', display: 'flex', flexDirection: 'column' } },
+      const popOverlay = pop ? h('div', { key: 'popwin', ref: popWinRef, style: { position: 'fixed', left: pop.x, top: pop.y, width: pop.w, height: pop.h, zIndex: 2147483000, background: '#0b0d10', border: '1px solid #333', borderRadius: 10, boxShadow: '0 12px 50px rgba(0,0,0,.7)', overflow: 'hidden', display: 'flex', flexDirection: 'column' } },
         h('div', { style: { height: 32, display: 'flex', alignItems: 'center', gap: 5, padding: '0 8px', cursor: 'move', background: '#15181d', borderBottom: '1px solid #262a31', userSelect: 'none', touchAction: 'none' }, onPointerDown: popDown('move'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp },
           h('span', { style: { fontSize: 12, color: '#cdd', flex: '1 1 auto', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' } }, (targetDevice ? (targetDevice.name || targetDevice.model || '') : '') + ' · 副屏（可拖动/缩放）'),
           h('button', { style: { ...popBtnStyle, color: '#fff', background: '#a33', border: '1px solid #a33' }, onPointerDown: (e) => e.stopPropagation(), onClick: () => setPop(null) }, '关闭 ✕'),
@@ -1519,7 +1543,7 @@ window.__ModuleLoader__.load({
         h('div', { ref: popRef, style: { flex: '1 1 auto', position: 'relative', background: '#000', cursor: 'crosshair', touchAction: 'none', userSelect: 'none', overscrollBehavior: 'contain' }, onClick: doTapFrac, onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: () => { dragRef.current = null; setTapPing(null) } },
           h('img', { src: `${API}/live?device=${encodeURIComponent(targetId || '')}&q=10&n=${liveNonce}`, alt: '副屏画面', onError: () => { setTimeout(() => setLiveNonce((x) => x + 1), 2500) }, style: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' } }),
           tapPing ? h('span', { style: { position: 'absolute', left: tapPing.x - 9, top: tapPing.y - 9, width: 18, height: 18, borderRadius: 9, border: '2px solid rgba(43,108,255,0.9)', pointerEvents: 'none' } }) : null,
-          h('div', { style: { position: 'absolute', right: 0, bottom: 0, width: 22, height: 22, cursor: 'nwse-resize', touchAction: 'none', background: 'linear-gradient(135deg, transparent 0%, transparent 42%, rgba(120,130,145,.55) 42%, rgba(120,130,145,.55) 52%, transparent 52%, transparent 66%, rgba(120,130,145,.85) 66%, rgba(120,130,145,.85) 80%, transparent 80%)' }, onPointerDown: popDown('resize'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp }),
+          h('div', { style: { position: 'absolute', right: 0, bottom: 0, width: 30, height: 30, cursor: 'nwse-resize', touchAction: 'none', zIndex: 5, background: 'linear-gradient(135deg, transparent 0%, transparent 46%, rgba(150,160,175,.7) 46%, rgba(150,160,175,.7) 55%, transparent 55%, transparent 66%, rgba(150,160,175,.95) 66%, rgba(150,160,175,.95) 78%, transparent 78%)' }, onPointerDown: popDown('resize'), onPointerMove: popMove, onPointerUp: popUp, onPointerCancel: popUp }),
         ),
       ) : null
 
