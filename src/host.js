@@ -2738,7 +2738,18 @@ img{max-width:100%;max-height:100%;object-fit:contain}</style></head>
     const killDeviceScreenrecord = () => adb(withTarget([
       'shell', 'pkill -9 screenrecord 2>/dev/null; pkill -9 -f "screenrecord --output-format" 2>/dev/null || true',
     ], serial), { timeout: 6000 }).catch(() => {})
-    const wake = () => adb(withTarget(['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], serial), { timeout: 8000 }).catch(() => {})
+    const wake = async () => {
+      try { await adb(withTarget(['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], serial), { timeout: 8000 }) } catch { /* ignore */ }
+      // 电视深睡时 WAKEUP 不一定能唤醒，检测到仍 Asleep/Dozing 就按一次电源键强唤醒。
+      try {
+        const r = await adb(withTarget(['shell', 'dumpsys power 2>/dev/null | grep -m1 mWakefulness='], serial), { timeout: 8000 })
+        if (/Asleep|Dozing/i.test(r.stdout || '')) {
+          await adb(withTarget(['shell', 'input', 'keyevent', 'KEYCODE_POWER'], serial), { timeout: 8000 })
+          await sleep(500)
+          await adb(withTarget(['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], serial), { timeout: 8000 })
+        }
+      } catch { /* ignore */ }
+    }
     const push = (buf) => {
       if (!buf || buf.length < 200) return
       hub.lastFrame = buf
