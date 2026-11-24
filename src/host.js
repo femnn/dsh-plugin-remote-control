@@ -1427,7 +1427,7 @@ export function apply(ctx, config) {
     // 只保留这一个设备：先断开其它多余连接能提高稳定性（不强制）
     let child
     try {
-      child = spawn(bin, ['-s', t, '--max-size=1280', '--max-fps=60', '--video-bit-rate=12M', '--stay-awake', '--always-on-top', '--window-title=流畅投屏 ' + t], { env, stdio: 'ignore', detached: true })
+      child = spawn(bin, ['-s', t, '--max-size=1280', '--max-fps=60', '--video-bit-rate=12M', '--stay-awake', '--always-on-top', '--no-audio', '--window-title=流畅投屏 ' + t], { env, stdio: 'ignore', detached: true })
     } catch (e) { throw Object.assign(new Error('启动 scrcpy 失败：' + (e.message || e)), { status: 500 }) }
     child.unref()
     scrcpyChild = child
@@ -1900,6 +1900,13 @@ export function apply(ctx, config) {
     const t = await resolveTarget(payload.device)
     if (!t) throw Object.assign(new Error('还没有连接手机'), { status: 409 })
     const kind = payload.kind
+    if (kind === 'key' && payload.name === 'screentoggle') {
+      // 熄屏/唤醒切换：醒着就 SLEEP，睡着就 WAKEUP
+      const pw = await adb(withTarget(['shell', 'dumpsys power 2>/dev/null | grep -m1 mWakefulness='], t), { timeout: 8000 }).catch(() => null)
+      const awake = /Awake/i.test((pw && pw.stdout) || '')
+      await adb(withTarget(['shell', 'input', 'keyevent', awake ? 'KEYCODE_SLEEP' : 'KEYCODE_WAKEUP'], t), { timeout: 8000 })
+      return { ok: true, device: t, slept: awake }
+    }
     let args
     if (kind === 'tap') args = ['input', 'tap', String(Number(payload.x) || 0), String(Number(payload.y) || 0)]
     else if (kind === 'swipe') args = ['input', 'swipe', String(Number(payload.x1) || 0), String(Number(payload.y1) || 0), String(Number(payload.x2) || 0), String(Number(payload.y2) || 0), String(Number(payload.ms) || 300)]

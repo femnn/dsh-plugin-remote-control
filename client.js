@@ -822,14 +822,14 @@ window.__ModuleLoader__.load({
           const horiz = Math.abs(x) > Math.abs(y)
           if (kind === 'tv') {
             const dist = horiz ? Math.abs(x) : Math.abs(y)
-            const steps = Math.max(1, Math.min(8, Math.round(dist / 50)))
+            const steps = Math.max(1, Math.min(5, Math.round(dist / 90)))
             const name = horiz ? (x > 0 ? 'dpadRight' : 'dpadLeft') : (y > 0 ? 'dpadDown' : 'dpadUp')
             for (let i = 0; i < steps; i++) { await api('/input', { kind: 'key', name, device: targetId }).catch(() => {}) }
           } else {
             const cx = 0.5, cy = 0.5
             let fx1, fy1, fx2, fy2
-            if (horiz) { const d = Math.max(0.05, Math.min(0.32, Math.abs(x) / 520)); const dir = x > 0 ? -1 : 1; fx1 = cx + dir * d / 2; fx2 = cx - dir * d / 2; fy1 = fy2 = cy }
-            else { const d = Math.max(0.05, Math.min(0.32, Math.abs(y) / 520)); const dir = y > 0 ? -1 : 1; fy1 = cy + dir * d / 2; fy2 = cy - dir * d / 2; fx1 = fx2 = cx }
+            if (horiz) { const d = Math.max(0.04, Math.min(0.20, Math.abs(x) / 950)); const dir = x > 0 ? -1 : 1; fx1 = cx + dir * d / 2; fx2 = cx - dir * d / 2; fy1 = fy2 = cy }
+            else { const d = Math.max(0.04, Math.min(0.20, Math.abs(y) / 950)); const dir = y > 0 ? -1 : 1; fy1 = cy + dir * d / 2; fy2 = cy - dir * d / 2; fx1 = fx2 = cx }
             await api('/swipefrac', { device: targetId, fx1, fy1, fx2, fy2, ms: 110 }).catch(() => {})
           }
         } finally { wheelBusy.current = false }
@@ -1277,13 +1277,18 @@ window.__ModuleLoader__.load({
           isTv ? '触控板两指滑动 / 按住拖动 = 上下左右方向键；点击 = 确定。' : '触控板两指滑动 / 按住拖动 = 画面内滑动；点击 = 点按。',
         ),
         h('div', { style: S.section }, '功能按键'),
-        h('div', { style: S.grid3 },
-          keyBtn('back', 'back', '返回'),
-          keyBtn('home', 'home', '主菜单'),
-          keyBtn('menu', 'keypad', '功能菜单'),
-          keyBtn('volumeUp', 'volUp', '音量+'),
-          keyBtn('volumeDown', 'volDown', '音量-'),
-          keyBtn('longOk', 'check', '长按确定'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 } },
+          ...(curKind === 'tv'
+            ? [keyBtn('back', 'back', '返回'), keyBtn('home', 'home', '主菜单'), keyBtn('menu', 'keypad', '功能菜单')]
+            : curKind === 'watch'
+              ? [keyBtn('dpadCenter', 'check', '单点确定'), keyBtn('back', 'back', '双击返回')]
+              : [keyBtn('home', 'home', '主菜单'), keyBtn('recents', 'recents', '后台')]),
+          h('div', { style: { display: 'flex', height: 46, boxSizing: 'border-box', border: `1px solid ${C.border3}`, borderRadius: 8, overflow: 'hidden' } },
+            h('button', { style: { flex: '1 1 50%', border: 'none', background: C.bg, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }, onClick: () => doKey('volumeDown'), disabled, title: '音量-' }, h(Ic, { name: 'volDown', size: 16 })),
+            h('div', { style: { width: 1, background: C.border3 } }),
+            h('button', { style: { flex: '1 1 50%', border: 'none', background: C.bg, color: C.text, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }, onClick: () => doKey('volumeUp'), disabled, title: '音量+' }, h(Ic, { name: 'volUp', size: 16 })),
+          ),
+          keyBtn('screentoggle', 'power', '熄屏/唤醒'),
         ),
         isGlasses ? h('div', { style: { marginTop: 10, fontSize: 11, color: C.text3, lineHeight: 1.5 } }, '🧩 AIUI 工程部署已移到「发送文件」标签页（选眼镜后可在那里部署工程做真机测试）。') : null,
         h('div', { style: S.section }, t('ctl.text')),
