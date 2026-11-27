@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-phone-remote",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "DSH 右侧栏的安卓手机/电视远程操控台：自动发现连接、实时画面与点按、AI 看图操控、投屏、发文件装 APK，并附带 Agent 操控工具。",
   "main": "index.js",
